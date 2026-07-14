@@ -585,10 +585,18 @@ dialog form {
 
 .query-head label { min-width: 130px; }
 
+.query-head button {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--ink);
+  box-shadow: none;
+}
+
 .query-head button.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  box-shadow: 0 8px 18px rgba(15, 118, 110, .22);
 }
 
 .pay-result {
@@ -695,6 +703,8 @@ dialog form {
 .annual-mode .bar-row strong {
   color: var(--ink);
   font-size: 10px;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .bar-track {

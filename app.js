@@ -982,7 +982,7 @@ function moneyItem(label, value, tone = "") {
 function shortMoney(value) {
   if (!value) return "0";
   if (Math.abs(value) < 10000) return fmtMoney.format(value);
-  return `${Math.round(value / 10000)}만`;
+  return String(Math.round(value / 10000));
 }
 
 function handleDayClick(date) {
@@ -1190,7 +1190,7 @@ function renderSalaryQuery(showAll) {
         ${moneyItem("연봉 세전", annualGross, "primary")}
         ${moneyItem("연봉 세후", annualNet, "primary")}
       </div>
-      <p class="chart-note">막대는 월별 세후 지급액 기준입니다.</p>
+      <p class="chart-note">막대는 월별 세후 지급액 기준입니다. 그래프 금액 단위는 만원입니다.</p>
     </div>
     `;
   } else {
