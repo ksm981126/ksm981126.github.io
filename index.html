@@ -6,6 +6,136 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css?v=mobile-ui-v1">
+  <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
+</head>
+<body>
+  <div class="app">
+    <aside class="settings" id="settingsPanel" aria-label="전체 설정">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">OFFLINE PAYROLL</p>
+          <h1>급여 달력</h1>
+        </div>
+        <button class="icon-btn only-mobile" id="closeSettings" aria-label="설정 닫기">×</button>
+      </div>
+
+      <form id="settingsForm" class="settings-form">
+        <label>시급<input type="number" id="hourlyWage" min="0" step="10" inputmode="numeric"></label>
+        <div class="two">
+          <label>기본 출근<input type="time" id="defaultStart"></label>
+          <label>기본 퇴근<input type="time" id="defaultEnd"></label>
+        </div>
+        <label>기본 휴게시간<input type="number" id="breakHours" min="0" max="8" step="0.5" inputmode="decimal"></label>
+        <div class="two">
+          <label>야간 시작<input type="time" id="nightStart"></label>
+          <label>야간 종료<input type="time" id="nightEnd"></label>
+        </div>
+        <div class="two">
+          <label>월급일<input type="number" id="payday" min="1" max="31" step="1" inputmode="numeric"></label>
+          <label>입사일<input type="date" id="hireDate"></label>
+        </div>
+        <label>사업장 규모<select id="businessSize"><option value="under5">5인 미만</option><option value="over5">5인 이상</option></select></label>
+        <label>주휴수당 기준<select id="weeklyAllowance"><option value="auto">주 15시간 이상이면 자동 계산</option><option value="off">계산하지 않음</option></select></label>
+        <fieldset>
+          <legend>세후 예상</legend>
+          <label class="check-row"><input type="checkbox" id="useDeductions">4대보험/소득세/지방소득세 예상 공제</label>
+          <label>비과세 월 금액<input type="number" id="taxFreeMonthly" min="0" step="1000" inputmode="numeric"></label>
+          <label>본인 포함 부양가족 수<input type="number" id="dependents" min="1" max="11" step="1" inputmode="numeric"></label>
+        </fieldset>
+        <button type="submit" class="primary-btn">설정 저장</button>
+      </form>
+
+      <div class="data-tools">
+        <button id="exportData" type="button">백업 내보내기</button>
+        <label class="file-btn">가져오기<input id="importData" type="file" accept="application/json"></label>
+      </div>
+      <div class="sync-tools">
+        <button id="driveConnect" type="button" class="primary-btn">Google Drive 연결</button>
+        <button id="driveLoad" type="button" class="ghost-btn">Drive에서 불러오기</button>
+        <button id="driveSave" type="button" class="ghost-btn">Drive에 저장</button>
+        <label class="check-row"><input type="checkbox" id="driveAutoSync">자동 동기화</label>
+        <p class="sync-status" id="driveStatus">Drive 연결 전입니다.</p>
+        <p class="sync-status">출근 기록, 시급/근무시간 설정, 세금 설정, 잠금 비밀번호가 함께 저장됩니다.</p>
+      </div>
+      <p class="small-note">월급일이 주말/공휴일이면 앞쪽 평일로 표시합니다. 급여는 이번 달에 받는 전월 근무분 기준입니다.</p>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn only-mobile" id="openSettings" aria-label="설정 열기">☰</button>
+        <div class="month-nav">
+          <button class="icon-btn" id="prevMonth" aria-label="이전 달">‹</button>
+          <strong id="monthLabel"></strong>
+          <button class="icon-btn" id="nextMonth" aria-label="다음 달">›</button>
+        </div>
+        <button class="ghost-btn" id="todayBtn">오늘</button>
+      </header>
+
+      <div class="tool-row">
+        <button class="ghost-btn" id="salaryQueryBtn" type="button">급여 조회</button>
+      </div>
+
+      <section class="summary" aria-label="급여 요약">
+        <div><span id="grossLabel">이번 달 지급 세전</span><strong id="grossPay">0원</strong></div>
+        <div><span id="netLabel">이번 달 지급 세후</span><strong id="netPay">0원</strong></div>
+        <div><span>전월 출근/휴가</span><strong id="workedDays">0일</strong></div>
+        <div><span>남은 휴가</span><strong id="leaveDays">0일</strong></div>
+      </section>
+
+      <section class="deduction-box" id="deductionBreakdown">공제 예상: 출근 기록을 입력하면 표시됩니다.</section>
+
+      <section class="calendar-wrap">
+        <div class="weekday-row"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+        <div class="calendar" id="calendar"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dayDialog">
+    <form method="dialog" id="dayForm">
+      <div class="dialog-head"><h2 id="dialogDate">근무 수정</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
+      <label>시급<input type="number" id="dayWage" min="0" step="10" inputmode="numeric"></label>
+      <div class="dialog-grid">
+        <label>출근 시간<input type="time" id="dayStart"></label>
+        <label>퇴근 시간<input type="time" id="dayEnd"></label>
+      </div>
+      <label>휴게시간<input type="number" id="dayBreak" min="0" max="8" step="0.5" inputmode="decimal"></label>
+      <label>근무구분<select id="dayType"><option value="normal">평일 근무</option><option value="holiday">휴일 근무</option></select></label>
+      <div class="dialog-actions">
+        <button type="button" id="vacationDay" class="ghost-btn">휴가</button>
+        <button type="button" id="deleteDay" class="danger-btn">기록 삭제</button>
+        <button value="save" class="primary-btn">저장</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="salaryDialog" class="wide-dialog">
+    <form method="dialog">
+      <div class="dialog-head"><h2>급여 조회</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
+      <div class="query-head">
+        <label>연도<input type="number" id="queryYear" min="2020" max="2100" step="1"></label>
+        <label>지급월<select id="queryMonth"></select></label>
+        <button type="button" id="queryOne" class="primary-btn">월별 조회</button>
+        <button type="button" id="queryAll" class="ghost-btn">전체 조회</button>
+      </div>
+      <div class="pay-result" id="salaryResult">조회할 월을 선택해 주세요.</div>
+      <div class="bar-list" id="salaryGraph"></div>
+    </form>
+  </dialog>
+
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="app.js?v=mobile-ui-v1"></script>
+</body>
+</html>
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f766e">
+  <title>급여 달력</title>
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
