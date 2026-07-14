@@ -956,7 +956,27 @@ function renderSummary() {
   els.netPay.textContent = fmtMoney.format(pay.net);
   els.workedDays.textContent = `${worked}일 / 휴가 ${vacations}일`;
   els.leaveDays.textContent = `${remainingLeave(today)}일`;
-  els.deductionBreakdown.innerHTML = `월급일: <strong>${pay.payday}</strong> · 공제 예상: <strong>${fmtMoney.format(pay.deductions.total)}</strong> · 국민연금 ${fmtMoney.format(pay.deductions.pension)}, 건강보험 ${fmtMoney.format(pay.deductions.health)}, 장기요양 ${fmtMoney.format(pay.deductions.care)}, 고용보험 ${fmtMoney.format(pay.deductions.employment)}, 소득세 ${fmtMoney.format(pay.deductions.incomeTax)}, 지방소득세 ${fmtMoney.format(pay.deductions.localTax)} · 주휴 ${fmtMoney.format(pay.weekly)} · 유급휴일 ${fmtMoney.format(pay.paidHoliday)} · 휴가 ${fmtMoney.format(pay.vacation)}`;
+  els.deductionBreakdown.innerHTML = `
+    <div class="info-strip">
+      <span>월급일 <strong>${pay.payday}</strong></span>
+      <span>공제 예상 <strong>${fmtMoney.format(pay.deductions.total)}</strong></span>
+    </div>
+    <div class="money-grid compact">
+      ${moneyItem("국민연금", pay.deductions.pension)}
+      ${moneyItem("건강보험", pay.deductions.health)}
+      ${moneyItem("장기요양", pay.deductions.care)}
+      ${moneyItem("고용보험", pay.deductions.employment)}
+      ${moneyItem("소득세", pay.deductions.incomeTax)}
+      ${moneyItem("지방소득세", pay.deductions.localTax)}
+      ${moneyItem("주휴", pay.weekly)}
+      ${moneyItem("유급휴일", pay.paidHoliday)}
+      ${moneyItem("휴가", pay.vacation)}
+    </div>
+  `;
+}
+
+function moneyItem(label, value, tone = "") {
+  return `<div class="money-item ${tone}"><span>${label}</span><strong>${fmtMoney.format(value)}</strong></div>`;
 }
 
 function handleDayClick(date) {
@@ -1151,12 +1171,41 @@ function renderSalaryQuery(showAll) {
   const values = Array.from({ length: 12 }, (_, i) => ({ month: i, pay: payrollReceivedIn(year, i) }));
   const annualGross = values.reduce((sum, item) => sum + item.pay.gross, 0);
   const annualNet = values.reduce((sum, item) => sum + item.pay.net, 0);
-  const annualLine = showAll ? `<br><strong>${year}년 지급 연봉</strong><br>세전 ${fmtMoney.format(annualGross)} / 세후 ${fmtMoney.format(annualNet)}` : "";
-  els.salaryResult.innerHTML = `<strong>${year}년 ${month + 1}월 지급 급여</strong><br>${pay.period.year}년 ${pay.period.month + 1}월 근무분 · 월급일 ${pay.payday}<br>세전 ${fmtMoney.format(pay.gross)} / 세후 ${fmtMoney.format(pay.net)}<br>근무 ${fmtMoney.format(pay.workPay)}, 주휴 ${fmtMoney.format(pay.weekly)}, 유급휴일 ${fmtMoney.format(pay.paidHoliday)}, 휴가 ${fmtMoney.format(pay.vacation)}, 공제 ${fmtMoney.format(pay.deductions.total)}${annualLine}`;
+  const annualBlock = showAll ? `
+    <div class="salary-section">
+      <div class="section-title">${year}년 지급 연봉</div>
+      <div class="money-grid two">
+        ${moneyItem("연봉 세전", annualGross, "primary")}
+        ${moneyItem("연봉 세후", annualNet, "primary")}
+      </div>
+    </div>
+  ` : "";
+  els.salaryResult.innerHTML = `
+    <div class="salary-title">
+      <strong>${year}년 ${month + 1}월 지급 급여</strong>
+      <span>${pay.period.year}년 ${pay.period.month + 1}월 근무분 · 월급일 ${pay.payday}</span>
+    </div>
+    <div class="money-grid two">
+      ${moneyItem("세전", pay.gross, "primary")}
+      ${moneyItem("세후", pay.net, "primary")}
+    </div>
+    <div class="money-grid compact">
+      ${moneyItem("근무", pay.workPay)}
+      ${moneyItem("주휴", pay.weekly)}
+      ${moneyItem("유급휴일", pay.paidHoliday)}
+      ${moneyItem("휴가", pay.vacation)}
+      ${moneyItem("공제", pay.deductions.total)}
+    </div>
+    ${annualBlock}
+  `;
   const max = Math.max(1, ...values.map((item) => item.pay.net));
   els.salaryGraph.innerHTML = showAll ? values.map((item) => {
     const width = Math.max(2, Math.round((item.pay.net / max) * 100));
-    return `<div class="bar-row"><span>${item.month + 1}월</span><div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div><strong>${fmtMoney.format(item.pay.net)}</strong></div>`;
+    return `<div class="bar-row">
+      <span>${item.month + 1}월</span>
+      <strong>${fmtMoney.format(item.pay.net)}</strong>
+      <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+    </div>`;
   }).join("") : "";
 }
 

@@ -344,6 +344,69 @@ legend {
 
 .deduction-box strong { color: var(--ink); }
 
+.info-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.info-strip span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: #f0f5f3;
+  color: var(--muted);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.money-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.money-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.money-item {
+  min-width: 0;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fbfcfc;
+}
+
+.money-item span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.money-item strong {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.money-item.primary {
+  background: var(--accent-soft);
+  border-color: rgba(15, 118, 110, .24);
+}
+
 .calendar-wrap {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -525,27 +588,76 @@ dialog form {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
-  line-height: 1.8;
+  line-height: 1.45;
   background: #fff;
+}
+
+.salary-title {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.salary-title strong {
+  font-size: 18px;
+  color: var(--ink);
+}
+
+.salary-title span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.salary-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--soft-line);
+}
+
+.section-title {
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .bar-list {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-top: 14px;
 }
 
 .bar-row {
   display: grid;
-  grid-template-columns: 54px 1fr 92px;
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
   font-size: 12px;
   color: var(--muted);
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 9px;
+  background: #fff;
+}
+
+.bar-row span {
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.bar-row strong {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bar-track {
-  height: 18px;
+  height: 8px;
   background: #eef3f1;
   border-radius: 999px;
   overflow: hidden;
@@ -639,7 +751,62 @@ dialog form {
     margin-bottom: 10px;
     padding: 10px;
     font-size: 12px;
-    line-height: 1.55;
+    line-height: 1.4;
+  }
+  .info-strip {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .info-strip span {
+    justify-content: space-between;
+    min-width: 0;
+    padding: 7px 8px;
+  }
+  .money-grid,
+  .money-grid.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .money-item {
+    padding: 8px;
+  }
+  .money-item strong {
+    font-size: 13px;
+  }
+  .query-head {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+  }
+  .query-head label {
+    min-width: 0;
+  }
+  .query-head button {
+    min-width: 0;
+  }
+  .pay-result {
+    padding: 10px;
+  }
+  .salary-title {
+    margin-bottom: 10px;
+  }
+  .salary-title strong {
+    font-size: 16px;
+  }
+  .bar-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .bar-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
+    padding: 8px 7px;
+    font-size: 11px;
+  }
+  .bar-row strong {
+    font-size: 11px;
   }
   .calendar-wrap {
     width: 100%;
@@ -729,7 +896,7 @@ dialog form {
 }
 
 @media (max-width: 520px) {
-  .settings-form .two, .dialog-grid, .bar-row, .password-actions { grid-template-columns: 1fr; }
+  .settings-form .two, .dialog-grid, .password-actions { grid-template-columns: 1fr; }
   .lock-card { padding: 22px; }
   .icon-btn {
     width: 38px;
