@@ -566,6 +566,7 @@ dialog {
 }
 
 .wide-dialog { width: min(760px, calc(100vw - 28px)); }
+.wide-dialog.annual-mode { width: min(980px, calc(100vw - 16px)); }
 
 dialog::backdrop { background: rgba(23, 32, 31, .38); }
 
@@ -615,11 +616,24 @@ dialog form {
   border-top: 1px solid var(--soft-line);
 }
 
+.annual-mode .salary-section {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .section-title {
   margin-bottom: 8px;
   color: var(--ink);
   font-size: 13px;
   font-weight: 900;
+}
+
+.chart-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .bar-list {
@@ -658,6 +672,23 @@ dialog form {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.annual-mode .bar-list {
+  gap: 10px;
+}
+
+.annual-mode .bar-row {
+  grid-template-rows: 168px auto auto;
+}
+
+.annual-mode .bar-track {
+  height: 168px;
+}
+
+.annual-mode .bar-row strong {
+  color: var(--ink);
+  font-size: 11px;
 }
 
 .bar-track {
@@ -817,12 +848,40 @@ dialog form {
   }
   .bar-row strong {
     font-size: 9px;
-    writing-mode: vertical-rl;
     justify-self: center;
-    max-height: 64px;
+    width: 100%;
+    max-width: 100%;
+    max-height: none;
+    letter-spacing: 0;
   }
   .bar-row span { font-size: 10px; }
   .bar-track { height: 108px; border-radius: 7px; }
+  .wide-dialog.annual-mode {
+    width: calc(100vw - 8px);
+    max-height: calc(100vh - 12px);
+  }
+  .annual-mode form {
+    gap: 10px;
+    padding: 12px 8px;
+  }
+  .annual-mode .query-head,
+  .annual-mode .pay-result {
+    margin-inline: 0;
+  }
+  .annual-mode .bar-list {
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .annual-mode .bar-row {
+    grid-template-rows: 128px auto auto;
+    padding: 6px 2px;
+  }
+  .annual-mode .bar-track {
+    height: 128px;
+  }
+  .annual-mode .bar-row strong {
+    font-size: 8px;
+  }
   .calendar-wrap {
     width: 100%;
     max-width: 100%;
@@ -936,11 +995,15 @@ dialog form {
     padding: 5px 2px;
   }
   .bar-row strong {
-    font-size: 8px;
-    max-height: 58px;
+    font-size: 7px;
+    max-height: none;
   }
   .bar-row span { font-size: 9px; }
   .bar-track { height: 92px; }
+  .annual-mode .bar-row {
+    grid-template-rows: 112px auto auto;
+  }
+  .annual-mode .bar-track { height: 112px; }
   .day {
     min-height: clamp(62px, 15vw, 78px);
     padding: 5px 3px;

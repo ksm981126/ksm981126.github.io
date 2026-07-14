@@ -979,6 +979,12 @@ function moneyItem(label, value, tone = "") {
   return `<div class="money-item ${tone}"><span>${label}</span><strong>${fmtMoney.format(value)}</strong></div>`;
 }
 
+function shortMoney(value) {
+  if (!value) return "0";
+  if (Math.abs(value) < 10000) return fmtMoney.format(value);
+  return `${Math.round(value / 10000)}만원`;
+}
+
 function handleDayClick(date) {
   const key = dateKey(date);
   const existing = state.days[key] || null;
@@ -1171,16 +1177,20 @@ function renderSalaryQuery(showAll) {
   const values = Array.from({ length: 12 }, (_, i) => ({ month: i, pay: payrollReceivedIn(year, i) }));
   const annualGross = values.reduce((sum, item) => sum + item.pay.gross, 0);
   const annualNet = values.reduce((sum, item) => sum + item.pay.net, 0);
-  const annualBlock = showAll ? `
+  els.salaryDialog.classList.toggle("annual-mode", showAll);
+  if (showAll) {
+    els.salaryResult.innerHTML = `
     <div class="salary-section">
       <div class="section-title">${year}년 지급 연봉</div>
       <div class="money-grid two">
         ${moneyItem("연봉 세전", annualGross, "primary")}
         ${moneyItem("연봉 세후", annualNet, "primary")}
       </div>
+      <p class="chart-note">막대는 월별 세후 지급액 기준입니다.</p>
     </div>
-  ` : "";
-  els.salaryResult.innerHTML = `
+    `;
+  } else {
+    els.salaryResult.innerHTML = `
     <div class="salary-title">
       <strong>${year}년 ${month + 1}월 지급 급여</strong>
       <span>${pay.period.year}년 ${pay.period.month + 1}월 근무분 · 월급일 ${pay.payday}</span>
@@ -1196,15 +1206,15 @@ function renderSalaryQuery(showAll) {
       ${moneyItem("휴가", pay.vacation)}
       ${moneyItem("공제", pay.deductions.total)}
     </div>
-    ${annualBlock}
   `;
+  }
   const max = Math.max(1, ...values.map((item) => item.pay.net));
   els.salaryGraph.innerHTML = showAll ? values.map((item) => {
     const height = Math.max(4, Math.round((item.pay.net / max) * 100));
     return `<div class="bar-row">
       <div class="bar-track"><div class="bar-fill" style="height:${height}%"></div></div>
       <span>${item.month + 1}월</span>
-      <strong>${fmtMoney.format(item.pay.net)}</strong>
+      <strong>${shortMoney(item.pay.net)}</strong>
     </div>`;
   }).join("") : "";
 }
