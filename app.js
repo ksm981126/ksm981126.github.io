@@ -4,6 +4,7 @@ const GOOGLE_CLIENT_ID = "583902313340-iphddiep3ami3h3ugsef7de5l7v9p9c9.apps.goo
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
+const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
@@ -13,7 +14,7 @@ let viewYear = today.getFullYear();
 let viewMonth = today.getMonth();
 let selectedDateKey = "";
 let tokenClient = null;
-let accessToken = "";
+let accessToken = loadStoredDriveToken();
 let autoSaveTimer = null;
 let isApplyingRemoteState = false;
 let driveMeta = loadDriveMeta();
@@ -256,6 +257,32 @@ function saveDriveMeta() {
   localStorage.setItem(DRIVE_META_KEY, JSON.stringify(driveMeta));
 }
 
+function loadStoredDriveToken() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DRIVE_TOKEN_KEY) || "{}");
+    if (saved.accessToken && saved.expiresAt && Number(saved.expiresAt) > Date.now() + 120000) {
+      return saved.accessToken;
+    }
+  } catch {}
+  localStorage.removeItem(DRIVE_TOKEN_KEY);
+  return "";
+}
+
+function rememberDriveToken(token, expiresIn = 3600) {
+  accessToken = token;
+  localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({
+    accessToken: token,
+    expiresAt: Date.now() + Math.max(60, Number(expiresIn || 3600) - 120) * 1000
+  }));
+  updateDriveControls();
+}
+
+function clearDriveToken() {
+  accessToken = "";
+  localStorage.removeItem(DRIVE_TOKEN_KEY);
+  updateDriveControls();
+}
+
 function setDriveStatus(message) {
   if (els.driveStatus) els.driveStatus.textContent = message;
 }
@@ -287,8 +314,12 @@ function waitForGoogleIdentity() {
   });
 }
 
-async function ensureDriveToken(prompt = "") {
+async function ensureDriveToken(prompt = "", options = {}) {
   if (accessToken) return accessToken;
+  const allowPopup = options.allowPopup !== false;
+  if (!allowPopup) {
+    throw new Error("Google Drive 연결을 먼저 눌러주세요. 한 번 연결하면 만료 전까지 저장/불러오기는 자동으로 됩니다.");
+  }
   await waitForGoogleIdentity();
   return new Promise((resolve, reject) => {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
@@ -300,9 +331,8 @@ async function ensureDriveToken(prompt = "") {
           reject(new Error(response.error));
           return;
         }
-        accessToken = response.access_token;
-        updateDriveControls();
-        resolve(accessToken);
+        rememberDriveToken(response.access_token, response.expires_in);
+        resolve(response.access_token);
       }
     });
     tokenClient.requestAccessToken({ prompt });
@@ -310,7 +340,7 @@ async function ensureDriveToken(prompt = "") {
 }
 
 async function driveFetch(url, options = {}) {
-  const token = await ensureDriveToken();
+  const token = await ensureDriveToken("", { allowPopup: false });
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -319,9 +349,8 @@ async function driveFetch(url, options = {}) {
     }
   });
   if (response.status === 401) {
-    accessToken = "";
-    await ensureDriveToken("");
-    return driveFetch(url, options);
+    clearDriveToken();
+    throw new Error("Google Drive 인증 시간이 만료됐습니다. Google Drive 연결을 한 번 다시 눌러주세요.");
   }
   if (!response.ok) {
     const text = await response.text();
@@ -1137,7 +1166,7 @@ els.driveConnect.addEventListener("click", async () => {
 
 els.driveLoad.addEventListener("click", async () => {
   try {
-    await ensureDriveToken("");
+    await ensureDriveToken("", { allowPopup: false });
     await loadFromDrive();
   } catch (error) {
     setDriveStatus(`Drive 불러오기 실패: ${error.message}`);
@@ -1146,7 +1175,7 @@ els.driveLoad.addEventListener("click", async () => {
 
 els.driveSave.addEventListener("click", async () => {
   try {
-    await ensureDriveToken("");
+    await ensureDriveToken("", { allowPopup: false });
     await saveToDrive();
   } catch (error) {
     setDriveStatus(`Drive 저장 실패: ${error.message}`);
@@ -1162,7 +1191,7 @@ els.driveAutoSync.addEventListener("change", async () => {
     return;
   }
   try {
-    await ensureDriveToken("");
+    await ensureDriveToken("", { allowPopup: false });
     await loadFromDrive();
     scheduleDriveAutoSave();
   } catch (error) {
