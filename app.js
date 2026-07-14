@@ -21,6 +21,7 @@ let driveMeta = loadDriveMeta();
 
 const els = {
   settingsPanel: document.querySelector("#settingsPanel"),
+  menuScrim: document.querySelector("#menuScrim"),
   openSettings: document.querySelector("#openSettings"),
   closeSettings: document.querySelector("#closeSettings"),
   form: document.querySelector("#settingsForm"),
@@ -1107,6 +1108,7 @@ function isMobileLayout() {
 function openSettingsPanel() {
   if (els.settingsPanel.classList.contains("open")) return;
   els.settingsPanel.classList.add("open");
+  els.menuScrim.classList.add("open");
   if (isMobileLayout()) {
     history.pushState({ settingsPanel: true }, "", location.href);
     settingsPanelHistory = true;
@@ -1116,6 +1118,7 @@ function openSettingsPanel() {
 function closeSettingsPanel(fromHistory = false) {
   if (!els.settingsPanel.classList.contains("open")) return;
   els.settingsPanel.classList.remove("open");
+  els.menuScrim.classList.remove("open");
   if (settingsPanelHistory) {
     settingsPanelHistory = false;
     if (!fromHistory) history.back();
@@ -1124,6 +1127,7 @@ function closeSettingsPanel(fromHistory = false) {
 
 els.openSettings.addEventListener("click", openSettingsPanel);
 els.closeSettings.addEventListener("click", () => closeSettingsPanel());
+els.menuScrim.addEventListener("click", () => closeSettingsPanel());
 
 window.addEventListener("popstate", () => {
   if (els.settingsPanel.classList.contains("open")) closeSettingsPanel(true);

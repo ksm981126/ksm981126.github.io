@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=mobile-ui-v4">
+  <link rel="stylesheet" href="styles.css?v=mobile-ui-v5">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -60,6 +60,8 @@
       </div>
       <p class="small-note">월급일이 주말/공휴일이면 앞쪽 평일로 표시합니다. 급여는 이번 달에 받는 전월 근무분 기준입니다.</p>
     </aside>
+
+    <div class="menu-scrim" id="menuScrim" aria-hidden="true"></div>
 
     <main class="main">
       <header class="topbar">
@@ -125,6 +127,6 @@
   </dialog>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="app.js?v=mobile-ui-v4"></script>
+  <script src="app.js?v=mobile-ui-v5"></script>
 </body>
 </html>

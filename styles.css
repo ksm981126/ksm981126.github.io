@@ -118,6 +118,10 @@ body.locked .app {
   overflow-y: auto;
 }
 
+.menu-scrim {
+  display: none;
+}
+
 .panel-head, .topbar, .dialog-head, .dialog-actions, .data-tools, .tool-row {
   display: flex;
   align-items: center;
@@ -577,6 +581,20 @@ dialog form {
     box-shadow: var(--shadow);
   }
   .settings.open { transform: translateX(0); }
+  .menu-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 18;
+    display: block;
+    background: rgba(23, 32, 31, .22);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease;
+  }
+  .menu-scrim.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
   .only-mobile { display: inline-grid; place-items: center; }
   .main {
     padding: 120px 12px 12px;
