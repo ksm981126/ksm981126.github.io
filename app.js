@@ -1200,11 +1200,11 @@ function renderSalaryQuery(showAll) {
   `;
   const max = Math.max(1, ...values.map((item) => item.pay.net));
   els.salaryGraph.innerHTML = showAll ? values.map((item) => {
-    const width = Math.max(2, Math.round((item.pay.net / max) * 100));
+    const height = Math.max(4, Math.round((item.pay.net / max) * 100));
     return `<div class="bar-row">
+      <div class="bar-track"><div class="bar-fill" style="height:${height}%"></div></div>
       <span>${item.month + 1}월</span>
       <strong>${fmtMoney.format(item.pay.net)}</strong>
-      <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
     </div>`;
   }).join("") : "";
 }
