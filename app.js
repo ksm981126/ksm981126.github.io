@@ -424,7 +424,7 @@ async function loadFromDrive() {
   renderSettings();
   renderCalendar();
   applyLockScreen();
-  setDriveStatus(`Drive에서 불러왔습니다. ${new Date().toLocaleTimeString("ko-KR")}`);
+  setDriveStatus(`Drive에서 전체 데이터(설정/잠금 포함)를 불러왔습니다. ${new Date().toLocaleTimeString("ko-KR")}`);
 }
 
 async function saveToDrive() {
@@ -437,7 +437,7 @@ async function saveToDrive() {
   });
   driveMeta.lastSync = new Date().toISOString();
   saveDriveMeta();
-  setDriveStatus(`Drive에 저장했습니다. ${new Date().toLocaleTimeString("ko-KR")}`);
+  setDriveStatus(`Drive에 전체 데이터(설정/잠금 포함)를 저장했습니다. ${new Date().toLocaleTimeString("ko-KR")}`);
 }
 
 function scheduleDriveAutoSave() {
