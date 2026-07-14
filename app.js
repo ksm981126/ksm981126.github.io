@@ -1169,6 +1169,7 @@ els.salaryQueryBtn.addEventListener("click", () => {
 
 els.queryOne.addEventListener("click", () => renderSalaryQuery(false));
 els.queryAll.addEventListener("click", () => renderSalaryQuery(true));
+els.queryMonth.addEventListener("change", () => renderSalaryQuery(false));
 
 function renderSalaryQuery(showAll) {
   const year = Number(els.queryYear.value || viewYear);
