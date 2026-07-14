@@ -585,6 +585,12 @@ dialog form {
 
 .query-head label { min-width: 130px; }
 
+.query-head button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .pay-result {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -688,7 +694,7 @@ dialog form {
 
 .annual-mode .bar-row strong {
   color: var(--ink);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .bar-track {

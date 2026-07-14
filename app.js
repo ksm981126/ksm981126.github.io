@@ -982,7 +982,7 @@ function moneyItem(label, value, tone = "") {
 function shortMoney(value) {
   if (!value) return "0";
   if (Math.abs(value) < 10000) return fmtMoney.format(value);
-  return `${Math.round(value / 10000)}만원`;
+  return `${Math.round(value / 10000)}만`;
 }
 
 function handleDayClick(date) {
@@ -1178,6 +1178,10 @@ function renderSalaryQuery(showAll) {
   const annualGross = values.reduce((sum, item) => sum + item.pay.gross, 0);
   const annualNet = values.reduce((sum, item) => sum + item.pay.net, 0);
   els.salaryDialog.classList.toggle("annual-mode", showAll);
+  els.queryOne.classList.toggle("active", !showAll);
+  els.queryAll.classList.toggle("active", showAll);
+  els.queryOne.setAttribute("aria-pressed", String(!showAll));
+  els.queryAll.setAttribute("aria-pressed", String(showAll));
   if (showAll) {
     els.salaryResult.innerHTML = `
     <div class="salary-section">
