@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=mobile-ui-v11">
+  <link rel="stylesheet" href="styles.css?v=mobile-ui-v12">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -75,6 +75,8 @@
       </header>
 
       <div class="tool-row">
+        <button class="primary-btn active" id="salaryCalendarBtn" type="button">급여 달력</button>
+        <button class="ghost-btn" id="journalCalendarBtn" type="button">업무일지</button>
         <button class="ghost-btn" id="salaryQueryBtn" type="button">급여 조회</button>
       </div>
 
@@ -126,7 +128,19 @@
     </form>
   </dialog>
 
+  <dialog id="journalDialog" class="wide-dialog">
+    <form method="dialog" id="journalForm">
+      <div class="dialog-head"><h2 id="journalDate">업무일지</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
+      <div class="journal-entries" id="journalEntries"></div>
+      <div class="dialog-actions">
+        <button type="button" id="addJournalEntry" class="ghost-btn">현장 추가</button>
+        <button type="button" id="deleteJournal" class="danger-btn">일지 삭제</button>
+        <button value="save" class="primary-btn">저장</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="app.js?v=mobile-ui-v11"></script>
+  <script src="app.js?v=mobile-ui-v12"></script>
 </body>
 </html>

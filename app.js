@@ -13,6 +13,7 @@ let state = loadState();
 let viewYear = today.getFullYear();
 let viewMonth = today.getMonth();
 let selectedDateKey = "";
+let appMode = "salary";
 let tokenClient = null;
 let accessToken = loadStoredDriveToken();
 let autoSaveTimer = null;
@@ -43,7 +44,10 @@ const els = {
   prevMonth: document.querySelector("#prevMonth"),
   nextMonth: document.querySelector("#nextMonth"),
   todayBtn: document.querySelector("#todayBtn"),
+  salaryCalendarBtn: document.querySelector("#salaryCalendarBtn"),
+  journalCalendarBtn: document.querySelector("#journalCalendarBtn"),
   salaryQueryBtn: document.querySelector("#salaryQueryBtn"),
+  summaryPanel: document.querySelector(".summary"),
   grossLabel: document.querySelector("#grossLabel"),
   netLabel: document.querySelector("#netLabel"),
   grossPay: document.querySelector("#grossPay"),
@@ -74,7 +78,13 @@ const els = {
   queryOne: document.querySelector("#queryOne"),
   queryAll: document.querySelector("#queryAll"),
   salaryResult: document.querySelector("#salaryResult"),
-  salaryGraph: document.querySelector("#salaryGraph")
+  salaryGraph: document.querySelector("#salaryGraph"),
+  journalDialog: document.querySelector("#journalDialog"),
+  journalForm: document.querySelector("#journalForm"),
+  journalDate: document.querySelector("#journalDate"),
+  journalEntries: document.querySelector("#journalEntries"),
+  addJournalEntry: document.querySelector("#addJournalEntry"),
+  deleteJournal: document.querySelector("#deleteJournal")
 };
 
 const lockEls = createPasswordUi();
@@ -198,7 +208,8 @@ function defaultState() {
       passwordHash: "",
       passwordSalt: ""
     },
-    days: {}
+    days: {},
+    journals: {}
   };
 }
 
@@ -209,7 +220,20 @@ function normalizeState(raw) {
   Object.entries(raw?.days || {}).forEach(([key, record]) => {
     days[key] = normalizeRecord(record, settings);
   });
-  return { updatedAt: raw?.updatedAt || new Date().toISOString(), settings, days };
+  const journals = {};
+  Object.entries(raw?.journals || {}).forEach(([key, entries]) => {
+    journals[key] = normalizeJournalEntries(entries);
+  });
+  return { updatedAt: raw?.updatedAt || new Date().toISOString(), settings, days, journals };
+}
+
+function normalizeJournalEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).map((entry) => ({
+    siteName: String(entry?.siteName || ""),
+    period: String(entry?.period || ""),
+    tasks: Array.isArray(entry?.tasks) ? entry.tasks.filter(Boolean) : [],
+    office: Boolean(entry?.office)
+  })).filter((entry) => entry.office || entry.siteName || entry.period || entry.tasks.length);
 }
 
 function normalizeRecord(record, settings = defaultState().settings) {
@@ -899,7 +923,13 @@ function renderSettings() {
 }
 
 function renderCalendar() {
-  els.monthLabel.textContent = `${viewYear}년 ${viewMonth + 1}월`;
+  const isJournalMode = appMode === "journal";
+  els.monthLabel.textContent = `${viewYear}년 ${viewMonth + 1}월${isJournalMode ? " 업무일지" : ""}`;
+  els.summaryPanel.hidden = isJournalMode;
+  els.deductionBreakdown.hidden = isJournalMode;
+  els.salaryQueryBtn.hidden = isJournalMode;
+  els.salaryCalendarBtn.classList.toggle("active", !isJournalMode);
+  els.journalCalendarBtn.classList.toggle("active", isJournalMode);
   els.calendar.innerHTML = "";
   const first = new Date(viewYear, viewMonth, 1);
   const start = new Date(viewYear, viewMonth, 1 - first.getDay());
@@ -907,18 +937,23 @@ function renderCalendar() {
   for (let i = 0; i < 42; i += 1) {
     const date = addDays(start, i);
     const key = dateKey(date);
-    const record = state.days[key] || null;
     const holiday = holidayInfo(date);
     const paidHoliday = isPaidHoliday(date);
     const isPayday = key === payKey;
     const button = document.createElement("button");
     button.type = "button";
-    button.className = ["day", dateKey(date) === dateKey(today) ? "today" : "", date.getMonth() !== viewMonth ? "muted" : "", date.getDay() === 0 ? "sun" : "", date.getDay() === 6 ? "sat" : "", holiday ? "holiday" : ""].filter(Boolean).join(" ");
-    button.innerHTML = dayHtml(date, key, record, holiday, paidHoliday, isPayday, date.getDay() === 6 ? weeklyOvertimeForDate(date) : null);
-    button.addEventListener("click", () => handleDayClick(date));
+    button.className = ["day", isJournalMode ? "journal-day" : "", dateKey(date) === dateKey(today) ? "today" : "", date.getMonth() !== viewMonth ? "muted" : "", date.getDay() === 0 ? "sun" : "", date.getDay() === 6 ? "sat" : "", holiday ? "holiday" : ""].filter(Boolean).join(" ");
+    if (isJournalMode) {
+      button.innerHTML = journalDayHtml(date, key, state.journals[key] || [], holiday);
+      button.addEventListener("click", () => handleJournalDayClick(date));
+    } else {
+      const record = state.days[key] || null;
+      button.innerHTML = dayHtml(date, key, record, holiday, paidHoliday, isPayday, date.getDay() === 6 ? weeklyOvertimeForDate(date) : null);
+      button.addEventListener("click", () => handleDayClick(date));
+    }
     els.calendar.appendChild(button);
   }
-  renderSummary();
+  if (!isJournalMode) renderSummary();
 }
 
 function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOvertime) {
@@ -943,6 +978,67 @@ function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOverti
     <div class="day-body">${body}<div class="badge-row">${badges.join("")}</div></div>
     <div class="day-pay">${record?.worked ? fmtMoney.format(dayPay(record, key)) : ""}</div>
   `;
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  })[char]);
+}
+
+function journalDayHtml(date, key, entries, holiday) {
+  const office = entries.some((entry) => entry.office);
+  const siteCount = entries.filter((entry) => !entry.office).length;
+  const taskNames = [...new Set(entries.flatMap((entry) => entry.tasks || []))].slice(0, 3);
+  const body = entries.length
+    ? `<span class="journal-stamp">${office && !siteCount ? "사무실" : `현장 ${siteCount || entries.length}곳`}</span>
+       <div class="mini-line">${taskNames.map(escapeHtml).join(" · ") || "업무일지 작성됨"}</div>`
+    : "";
+  return `
+    <div class="date-row"><span class="date">${date.getDate()}</span><span class="holiday-name">${holiday?.name || ""}</span></div>
+    <div class="day-body">${body}</div>
+    <div class="day-pay">${entries.length ? `${entries.length}건` : ""}</div>
+  `;
+}
+
+function journalEntryTemplate(entry = {}, index = 0) {
+  const tasks = ["설치", "점검", "배터리 교체", "철거"];
+  const selected = new Set(entry.tasks || []);
+  return `
+    <section class="journal-entry" data-index="${index}">
+      <div class="entry-head">
+        <strong>업무 ${index + 1}</strong>
+        <button type="button" class="ghost-btn remove-journal-entry">삭제</button>
+      </div>
+      <label class="check-row"><input type="checkbox" class="journal-office" ${entry.office ? "checked" : ""}>사무실</label>
+      <label>현장명<input type="text" class="journal-site" value="${escapeHtml(entry.siteName)}" placeholder="현장명을 입력하세요"></label>
+      <label>작업기간<input type="text" class="journal-period" value="${escapeHtml(entry.period)}" placeholder="예: 09:00-11:30 또는 오전"></label>
+      <fieldset>
+        <legend>맡은 업무</legend>
+        <div class="task-checks">
+          ${tasks.map((task) => `<label class="check-row"><input type="checkbox" class="journal-task" value="${task}" ${selected.has(task) ? "checked" : ""}>${task}</label>`).join("")}
+        </div>
+      </fieldset>
+    </section>
+  `;
+}
+
+function renderJournalForm(entries = []) {
+  const items = entries.length ? entries : [{ siteName: "", period: "", tasks: [], office: false }];
+  els.journalEntries.innerHTML = items.map(journalEntryTemplate).join("");
+}
+
+function readJournalForm() {
+  return Array.from(els.journalEntries.querySelectorAll(".journal-entry")).map((entry) => ({
+    office: entry.querySelector(".journal-office").checked,
+    siteName: entry.querySelector(".journal-site").value.trim(),
+    period: entry.querySelector(".journal-period").value.trim(),
+    tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value)
+  })).filter((entry) => entry.office || entry.siteName || entry.period || entry.tasks.length);
 }
 
 function renderSummary() {
@@ -997,6 +1093,14 @@ function handleDayClick(date) {
   els.dayBreak.value = record.breakHours ?? state.settings.breakHours;
   els.dayType.value = record.type === "holiday" || isHoliday(date) ? "holiday" : "normal";
   els.dialog.showModal();
+}
+
+function handleJournalDayClick(date) {
+  const key = dateKey(date);
+  selectedDateKey = key;
+  els.journalDate.textContent = `${key} 업무일지`;
+  renderJournalForm(state.journals[key] || []);
+  els.journalDialog.showModal();
 }
 
 function recordFromDialog() {
@@ -1101,6 +1205,37 @@ els.deleteDay.addEventListener("click", () => {
   renderCalendar();
 });
 
+els.addJournalEntry.addEventListener("click", () => {
+  const current = readJournalForm();
+  current.push({ siteName: "", period: "", tasks: [], office: false });
+  renderJournalForm(current);
+});
+
+els.journalEntries.addEventListener("click", (event) => {
+  if (!event.target.classList.contains("remove-journal-entry")) return;
+  const current = readJournalForm();
+  const entry = event.target.closest(".journal-entry");
+  current.splice(Number(entry.dataset.index), 1);
+  renderJournalForm(current);
+});
+
+els.journalForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const entries = readJournalForm();
+  if (entries.length) state.journals[selectedDateKey] = entries;
+  else delete state.journals[selectedDateKey];
+  saveState();
+  els.journalDialog.close();
+  renderCalendar();
+});
+
+els.deleteJournal.addEventListener("click", () => {
+  delete state.journals[selectedDateKey];
+  saveState();
+  els.journalDialog.close();
+  renderCalendar();
+});
+
 els.prevMonth.addEventListener("click", () => {
   viewMonth -= 1;
   if (viewMonth < 0) {
@@ -1122,6 +1257,16 @@ els.nextMonth.addEventListener("click", () => {
 els.todayBtn.addEventListener("click", () => {
   viewYear = today.getFullYear();
   viewMonth = today.getMonth();
+  renderCalendar();
+});
+
+els.salaryCalendarBtn.addEventListener("click", () => {
+  appMode = "salary";
+  renderCalendar();
+});
+
+els.journalCalendarBtn.addEventListener("click", () => {
+  appMode = "journal";
   renderCalendar();
 });
 
