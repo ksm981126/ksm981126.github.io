@@ -1280,6 +1280,7 @@ function openSettingsPanel() {
   if (els.settingsPanel.classList.contains("open")) return;
   els.settingsPanel.classList.add("open");
   els.menuScrim.classList.add("open");
+  document.body.classList.add("settings-open");
   if (isMobileLayout()) {
     history.pushState({ settingsPanel: true }, "", location.href);
     settingsPanelHistory = true;
@@ -1290,6 +1291,7 @@ function closeSettingsPanel(fromHistory = false) {
   if (!els.settingsPanel.classList.contains("open")) return;
   els.settingsPanel.classList.remove("open");
   els.menuScrim.classList.remove("open");
+  document.body.classList.remove("settings-open");
   if (settingsPanelHistory) {
     settingsPanelHistory = false;
     if (!fromHistory) history.back();

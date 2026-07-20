@@ -116,6 +116,8 @@ body.locked .app {
   border-right: 1px solid var(--line);
   padding: 24px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .menu-scrim {
@@ -805,12 +807,25 @@ dialog form {
     position: fixed;
     inset: 0 auto 0 0;
     width: min(88vw, 340px);
+    height: 100vh;
+    height: 100dvh;
     z-index: 20;
     transform: translateX(-105%);
     transition: transform 180ms ease;
     box-shadow: var(--shadow);
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
   }
   .settings.open { transform: translateX(0); }
+  body.settings-open {
+    overflow: hidden;
+    touch-action: none;
+  }
+  body.settings-open .settings {
+    touch-action: pan-y;
+  }
   .menu-scrim {
     position: fixed;
     inset: 0;
