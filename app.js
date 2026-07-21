@@ -385,17 +385,20 @@ async function driveFetch(url, options = {}) {
 }
 
 async function findDriveFile() {
-  if (driveMeta.fileId) return driveMeta.fileId;
   const query = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id,name,modifiedTime)&pageSize=1`;
+  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)&pageSize=10`;
   const response = await driveFetch(url);
   const data = await response.json();
   const file = data.files?.[0];
   if (file?.id) {
     driveMeta.fileId = file.id;
+    driveMeta.lastRemoteModified = file.modifiedTime || "";
     saveDriveMeta();
     return file.id;
   }
+  driveMeta.fileId = "";
+  driveMeta.lastRemoteModified = "";
+  saveDriveMeta();
   return "";
 }
 
@@ -421,6 +424,7 @@ async function createDriveFile() {
   const data = await response.json();
   driveMeta.fileId = data.id;
   driveMeta.lastSync = new Date().toISOString();
+  driveMeta.lastRemoteModified = data.modifiedTime || "";
   saveDriveMeta();
   return data.id;
 }
@@ -429,14 +433,14 @@ async function getDriveFileId() {
   return (await findDriveFile()) || (await createDriveFile());
 }
 
-async function loadFromDrive() {
+async function loadFromDrive(options = {}) {
   setDriveStatus("Drive에서 불러오는 중...");
   const fileId = await getDriveFileId();
   const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
   const remote = normalizeState(await response.json());
   const localTime = Date.parse(state.updatedAt || 0);
   const remoteTime = Date.parse(remote.updatedAt || 0);
-  if (remoteTime < localTime && !confirm("현재 기기 데이터가 Drive보다 최신입니다. 그래도 Drive 데이터로 덮어쓸까요?")) {
+  if (!options.force && remoteTime < localTime && !confirm("현재 기기 데이터가 Drive보다 최신입니다. 그래도 Drive 데이터로 덮어쓸까요?")) {
     setDriveStatus("Drive 불러오기를 취소했습니다.");
     return;
   }
@@ -454,6 +458,8 @@ async function loadFromDrive() {
 
 async function saveToDrive() {
   setDriveStatus("Drive에 저장하는 중...");
+  state.updatedAt = new Date().toISOString();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const fileId = await getDriveFileId();
   await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
     method: "PATCH",
@@ -1410,7 +1416,7 @@ els.driveConnect.addEventListener("click", async () => {
 els.driveLoad.addEventListener("click", async () => {
   try {
     await ensureDriveToken("", { allowPopup: false });
-    await loadFromDrive();
+    await loadFromDrive({ force: true });
   } catch (error) {
     setDriveStatus(`Drive 불러오기 실패: ${error.message}`);
   }
