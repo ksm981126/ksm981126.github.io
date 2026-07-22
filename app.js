@@ -1012,7 +1012,7 @@ function journalDayHtml(date, key, entries, holiday) {
 }
 
 function journalEntryTemplate(entry = {}, index = 0) {
-  const tasks = ["설치", "점검", "배터리 교체", "UPS 교체", "철거"];
+  const tasks = ["설치", "점검", "배터리 교체", "UPS 교체", "철거", "유급휴가"];
   const selected = new Set(entry.tasks || []);
   return `
     <section class="journal-entry" data-index="${index}">
