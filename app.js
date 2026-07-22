@@ -1097,7 +1097,7 @@ function handleDayClick(date) {
   els.dayStart.value = record.start || state.settings.defaultStart;
   els.dayEnd.value = record.end || state.settings.defaultEnd;
   els.dayBreak.value = record.breakHours ?? state.settings.breakHours;
-  els.dayType.value = record.type === "holiday" || isHoliday(date) ? "holiday" : "normal";
+  els.dayType.value = record.type === "vacation" ? "vacation" : record.type === "holiday" || isHoliday(date) ? "holiday" : "normal";
   els.dialog.showModal();
 }
 
@@ -1110,6 +1110,9 @@ function handleJournalDayClick(date) {
 }
 
 function recordFromDialog() {
+  if (els.dayType.value === "vacation") {
+    return { type: "vacation", worked: false, wage: Number(els.dayWage.value || state.settings.hourlyWage) };
+  }
   return {
     worked: true,
     wage: Number(els.dayWage.value || 0),
@@ -1182,7 +1185,18 @@ lockEls.lockNow.addEventListener("click", () => {
 els.dayForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const record = recordFromDialog();
-  showLegalWorkAlert(selectedDateKey, record);
+  if (record.type === "vacation") {
+    if (!isEmployedOn(dateFromKey(selectedDateKey))) {
+      alert("입사일 이전에는 휴가를 사용할 수 없습니다.");
+      return;
+    }
+    if (remainingLeave(today) <= 0 && state.days[selectedDateKey]?.type !== "vacation") {
+      alert("사용 가능한 휴가가 없습니다.");
+      return;
+    }
+  } else {
+    showLegalWorkAlert(selectedDateKey, record);
+  }
   state.days[selectedDateKey] = record;
   saveState();
   els.dialog.close();
