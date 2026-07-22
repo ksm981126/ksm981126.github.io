@@ -63,6 +63,7 @@ const els = {
   dayEnd: document.querySelector("#dayEnd"),
   dayBreak: document.querySelector("#dayBreak"),
   dayType: document.querySelector("#dayType"),
+  dayCalcPreview: document.querySelector("#dayCalcPreview"),
   vacationDay: document.querySelector("#vacationDay"),
   deleteDay: document.querySelector("#deleteDay"),
   exportData: document.querySelector("#exportData"),
@@ -239,6 +240,9 @@ function normalizeJournalEntries(entries) {
 function normalizeRecord(record, settings = defaultState().settings) {
   if (record?.type === "vacation") {
     return { type: "vacation", worked: false, wage: Number(record.wage || settings.hourlyWage) };
+  }
+  if (record?.type === "substituteHoliday" || record?.type === "substitute") {
+    return { type: "substituteHoliday", worked: false, wage: Number(record.wage || settings.hourlyWage) };
   }
   const start = record?.start || settings.defaultStart;
   let end = record?.end || settings.defaultEnd;
@@ -678,6 +682,10 @@ function monthVacationRecords(year, month) {
   return monthKeys(year, month).map((key) => [key, state.days[key]]).filter(([, record]) => record?.type === "vacation");
 }
 
+function monthSubstituteHolidayRecords(year, month) {
+  return monthKeys(year, month).map((key) => [key, state.days[key]]).filter(([, record]) => record?.type === "substituteHoliday");
+}
+
 function weekKey(date) {
   const copy = new Date(date);
   copy.setDate(copy.getDate() - copy.getDay());
@@ -710,6 +718,7 @@ function paidHolidayAllowanceForMonth(year, month) {
   return monthKeys(year, month).reduce((sum, key) => {
     const date = dateFromKey(key);
     if (!isPaidHoliday(date) || !isEmployedOn(date)) return sum;
+    if (state.days[key]?.type === "substituteHoliday") return sum;
     return sum + paidDayHours() * Number(state.settings.hourlyWage || 0);
   }, 0);
 }
@@ -718,14 +727,19 @@ function vacationPayForMonth(year, month) {
   return monthVacationRecords(year, month).reduce((sum, [, record]) => sum + paidDayHours() * Number(record.wage || state.settings.hourlyWage || 0), 0);
 }
 
+function substituteHolidayPayForMonth(year, month) {
+  return monthSubstituteHolidayRecords(year, month).reduce((sum, [, record]) => sum + paidDayHours() * Number(record.wage || state.settings.hourlyWage || 0), 0);
+}
+
 function payrollForWorkMonth(year, month) {
   const workPay = monthRecords(year, month).reduce((sum, [key, record]) => sum + dayPay(record, key), 0);
   const weekly = weeklyAllowanceForMonth(year, month);
   const paidHoliday = Math.round(paidHolidayAllowanceForMonth(year, month));
   const vacation = Math.round(vacationPayForMonth(year, month));
-  const gross = Math.round(workPay + weekly + paidHoliday + vacation);
+  const substituteHoliday = Math.round(substituteHolidayPayForMonth(year, month));
+  const gross = Math.round(workPay + weekly + paidHoliday + vacation + substituteHoliday);
   const deductions = estimateDeductions(gross);
-  return { workPay, weekly, paidHoliday, vacation, gross, deductions, net: Math.max(0, gross - deductions.total) };
+  return { workPay, weekly, paidHoliday, vacation, substituteHoliday, gross, deductions, net: Math.max(0, gross - deductions.total) };
 }
 
 function payrollReceivedIn(year, month) {
@@ -967,6 +981,7 @@ function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOverti
   if (isPayday) badges.push('<span class="badge pay">월급일</span>');
   if (paidHoliday) badges.push('<span class="badge paid">유급휴일</span>');
   if (record?.type === "vacation") badges.push('<span class="badge vac">휴가</span>');
+  if (record?.type === "substituteHoliday") badges.push('<span class="badge substitute">대체</span>');
   if (weeklyOvertime !== null) badges.push(`<span class="badge week">주 연장 ${weeklyOvertime.toFixed(1)}h</span>`);
   if (record?.worked) {
     const overtime = Math.max(0, workHours(record) - 8);
@@ -978,11 +993,13 @@ function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOverti
     ? `<span class="stamp">출근</span><div class="mini-line">${record.start}-${record.end} · ${fmtMoney.format(record.wage)}/h</div>`
     : record?.type === "vacation"
       ? `<div class="mini-line">유급휴가 · ${fmtMoney.format(record.wage || state.settings.hourlyWage)}/h</div>`
+      : record?.type === "substituteHoliday"
+        ? `<div class="mini-line">대체공휴일 · 8h · ${fmtMoney.format(record.wage || state.settings.hourlyWage)}/h</div>`
       : "";
   return `
     <div class="date-row"><span class="date">${date.getDate()}</span><span class="holiday-name">${holiday?.name || ""}</span></div>
     <div class="day-body">${body}<div class="badge-row">${badges.join("")}</div></div>
-    <div class="day-pay">${record?.worked ? fmtMoney.format(dayPay(record, key)) : ""}</div>
+    <div class="day-pay">${record?.worked ? fmtMoney.format(dayPay(record, key)) : record?.type === "substituteHoliday" ? fmtMoney.format(paidDayHours() * Number(record.wage || state.settings.hourlyWage || 0)) : ""}</div>
   `;
 }
 
@@ -1072,6 +1089,7 @@ function renderSummary() {
       ${moneyItem("지방소득세", pay.deductions.localTax)}
       ${moneyItem("주휴", pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
+      ${moneyItem("대체공휴일", pay.substituteHoliday)}
       ${moneyItem("휴가", pay.vacation)}
     </div>
   `;
@@ -1087,6 +1105,28 @@ function shortMoney(value) {
   return String(Math.round(value / 10000));
 }
 
+function updateDayCalcPreview() {
+  if (!els.dayCalcPreview) return;
+  const wage = Number(els.dayWage.value || state.settings.hourlyWage || 0);
+  const type = els.dayType.value;
+  if (type === "substituteHoliday") {
+    els.dayCalcPreview.textContent = `대체 공휴일: ${paidDayHours()}시간 × ${fmtMoney.format(wage)} = ${fmtMoney.format(paidDayHours() * wage)}`;
+    return;
+  }
+  const previewRecord = {
+    worked: true,
+    wage,
+    start: els.dayStart.value || state.settings.defaultStart,
+    end: els.dayEnd.value || state.settings.defaultEnd,
+    breakHours: Number(els.dayBreak.value || 0),
+    type
+  };
+  const hours = workHours(previewRecord);
+  const overtime = Math.max(0, hours - 8);
+  const night = nightHours(previewRecord);
+  els.dayCalcPreview.textContent = `근로 ${hours.toFixed(1)}시간 · 연장 ${overtime.toFixed(1)}시간 · 야간 ${night.toFixed(1)}시간`;
+}
+
 function handleDayClick(date) {
   const key = dateKey(date);
   const existing = state.days[key] || null;
@@ -1097,7 +1137,8 @@ function handleDayClick(date) {
   els.dayStart.value = record.start || state.settings.defaultStart;
   els.dayEnd.value = record.end || state.settings.defaultEnd;
   els.dayBreak.value = record.breakHours ?? state.settings.breakHours;
-  els.dayType.value = record.type === "vacation" ? "vacation" : record.type === "holiday" || isHoliday(date) ? "holiday" : "normal";
+  els.dayType.value = record.type === "substituteHoliday" ? "substituteHoliday" : record.type === "holiday" || isHoliday(date) ? "holiday" : "normal";
+  updateDayCalcPreview();
   els.dialog.showModal();
 }
 
@@ -1110,8 +1151,8 @@ function handleJournalDayClick(date) {
 }
 
 function recordFromDialog() {
-  if (els.dayType.value === "vacation") {
-    return { type: "vacation", worked: false, wage: Number(els.dayWage.value || state.settings.hourlyWage) };
+  if (els.dayType.value === "substituteHoliday") {
+    return { type: "substituteHoliday", worked: false, wage: Number(els.dayWage.value || state.settings.hourlyWage) };
   }
   return {
     worked: true,
@@ -1122,6 +1163,11 @@ function recordFromDialog() {
     type: els.dayType.value
   };
 }
+
+[els.dayWage, els.dayStart, els.dayEnd, els.dayBreak, els.dayType].forEach((input) => {
+  input.addEventListener("input", updateDayCalcPreview);
+  input.addEventListener("change", updateDayCalcPreview);
+});
 
 els.form.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1194,7 +1240,7 @@ els.dayForm.addEventListener("submit", (event) => {
       alert("사용 가능한 휴가가 없습니다.");
       return;
     }
-  } else {
+  } else if (record.worked) {
     showLegalWorkAlert(selectedDateKey, record);
   }
   state.days[selectedDateKey] = record;
@@ -1375,6 +1421,7 @@ function renderSalaryQuery(showAll) {
       ${moneyItem("근무", pay.workPay)}
       ${moneyItem("주휴", pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
+      ${moneyItem("대체공휴일", pay.substituteHoliday)}
       ${moneyItem("휴가", pay.vacation)}
       ${moneyItem("공제", pay.deductions.total)}
     </div>

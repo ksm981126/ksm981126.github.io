@@ -257,6 +257,14 @@ legend {
   line-height: 1.45;
 }
 
+.form-note {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
 .small-note {
   color: var(--muted);
   font-size: 13px;
@@ -576,6 +584,7 @@ legend {
 .badge.pay { background: var(--amber-soft); border-color: #ead27d; color: #7a5600; }
 .badge.paid { background: var(--accent-soft); border-color: #b9ddd6; color: var(--accent); }
 .badge.vac { background: var(--violet-soft); border-color: #cbc1ff; color: var(--violet); }
+.badge.substitute { background: var(--amber-soft); border-color: #ead27d; color: #7a5600; }
 .badge.over { background: var(--coral-soft); border-color: #f2b6a8; color: var(--coral); }
 .badge.night { background: var(--indigo-soft); border-color: #bbc7ff; color: var(--indigo); }
 .badge.week { background: #eef3f1; border-color: #b9d4cd; color: var(--accent); }
@@ -1120,16 +1129,15 @@ dialog form {
   .mini-line { display: none; }
   .badge.pay,
   .badge.paid,
-  .badge.vac {
+  .badge.vac,
+  .badge.substitute,
+  .badge.over,
+  .badge.night {
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .badge.over,
-  .badge.night,
-  .badge.week {
-    display: none;
-  }
+  .badge.week { display: none; }
   .day-pay { display: none; }
 }
