@@ -1466,8 +1466,8 @@ els.importData.addEventListener("change", async (event) => {
 els.driveConnect.addEventListener("click", async () => {
   try {
     setDriveStatus("Google Drive 연결 중...");
-    await ensureDriveToken("consent");
-    setDriveStatus("Drive 연결 완료. 불러오기 또는 저장을 눌러주세요.");
+    await ensureDriveToken("");
+    setDriveStatus("Drive 연결 완료. 다음부터는 가능한 경우 자동으로 다시 연결합니다.");
     if (driveMeta.autoSync) await loadFromDrive();
   } catch (error) {
     setDriveStatus(`Drive 연결 실패: ${error.message}`);
@@ -1501,7 +1501,7 @@ els.driveAutoSync.addEventListener("change", async () => {
     return;
   }
   try {
-    await ensureDriveToken("", { allowPopup: false });
+    await ensureDriveToken("");
     await loadFromDrive();
     scheduleDriveAutoSave();
   } catch (error) {
@@ -1511,6 +1511,21 @@ els.driveAutoSync.addEventListener("change", async () => {
     setDriveStatus(`자동 동기화 시작 실패: ${error.message}`);
   }
 });
+
+async function startDriveAutoSync() {
+  if (!driveMeta.autoSync) return;
+  if (!accessToken) {
+    setDriveStatus("자동 동기화가 켜져 있습니다. 토큰이 만료되면 Google Drive 연결을 한 번 눌러주세요.");
+    return;
+  }
+  try {
+    setDriveStatus("자동 동기화 중: Drive에서 최신 데이터를 확인합니다...");
+    await loadFromDrive();
+    scheduleDriveAutoSave();
+  } catch (error) {
+    setDriveStatus(`자동 동기화 실패: ${error.message}`);
+  }
+}
 
 if ("serviceWorker" in navigator) {
   let refreshedByNewWorker = false;
@@ -1526,7 +1541,7 @@ if ("serviceWorker" in navigator) {
 
 saveState();
 updateDriveControls();
-if (driveMeta.autoSync) setDriveStatus("자동 동기화가 켜져 있습니다. Drive 연결을 눌러주세요.");
 renderSettings();
 renderCalendar();
 applyLockScreen();
+startDriveAutoSync();
