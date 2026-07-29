@@ -632,6 +632,14 @@ function isPaidHoliday(date) {
   return state.settings.businessSize === "over5" && date.getDay() >= 1 && date.getDay() <= 5 && isHoliday(date);
 }
 
+function isAutomaticSubstituteHoliday(date) {
+  return Boolean(holidayInfo(date)?.substitute);
+}
+
+function isPaidAttendanceHoliday(date) {
+  return isPaidHoliday(date) || (state.settings.businessSize === "over5" && date.getDay() >= 1 && date.getDay() <= 5 && isAutomaticSubstituteHoliday(date));
+}
+
 function isEmployedOn(date) {
   return dateKey(date) >= state.settings.hireDate;
 }
@@ -725,7 +733,7 @@ function weeklyAllowanceForMonth(year, month) {
 function paidHolidayAllowanceForMonth(year, month) {
   return monthKeys(year, month).reduce((sum, key) => {
     const date = dateFromKey(key);
-    if (!isPaidHoliday(date) || !isEmployedOn(date)) return sum;
+    if (!isPaidAttendanceHoliday(date) || !isEmployedOn(date)) return sum;
     if (state.days[key]?.type === "substituteHoliday") return sum;
     return sum + paidDayHours() * Number(state.settings.hourlyWage || 0);
   }, 0);
@@ -830,14 +838,14 @@ function keyInRange(key, startDate, endDate) {
 function isAttendanceCredit(key, record) {
   if (record?.worked || record?.type === "vacation" || record?.type === "substituteHoliday") return true;
   const date = dateFromKey(key);
-  return isPaidHoliday(date) && isEmployedOn(date);
+  return isPaidAttendanceHoliday(date) && isEmployedOn(date);
 }
 
 function attendanceCreditsInRange(startDate, endDate) {
   const recorded = Object.entries(state.days).filter(([key, record]) => keyInRange(key, startDate, endDate) && isAttendanceCredit(key, record)).length;
   let paidHolidays = 0;
   for (let date = new Date(startDate); date < endDate; date = addDays(date, 1)) {
-    if (isPaidHoliday(date) && isEmployedOn(date) && !state.days[dateKey(date)]) paidHolidays += 1;
+    if (isPaidAttendanceHoliday(date) && isEmployedOn(date) && !state.days[dateKey(date)]) paidHolidays += 1;
   }
   return recorded + paidHolidays;
 }
@@ -967,7 +975,7 @@ function renderCalendar() {
     const date = addDays(start, i);
     const key = dateKey(date);
     const holiday = holidayInfo(date);
-    const paidHoliday = isPaidHoliday(date);
+    const paidHoliday = isPaidAttendanceHoliday(date);
     const isPayday = key === payKey;
     const button = document.createElement("button");
     button.type = "button";
@@ -988,7 +996,8 @@ function renderCalendar() {
 function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOvertime) {
   const badges = [];
   if (isPayday) badges.push('<span class="badge pay">월급일</span>');
-  if (paidHoliday) badges.push('<span class="badge paid">유급휴일</span>');
+  if (paidHoliday && holiday?.substitute) badges.push('<span class="badge substitute">대체공휴일</span>');
+  else if (paidHoliday) badges.push('<span class="badge paid">유급휴일</span>');
   if (record?.type === "vacation") badges.push('<span class="badge vac">휴가</span>');
   if (record?.type === "substituteHoliday") badges.push('<span class="badge substitute">대체</span>');
   if (weeklyOvertime !== null) badges.push(`<span class="badge week">주 연장 ${weeklyOvertime.toFixed(1)}h</span>`);
