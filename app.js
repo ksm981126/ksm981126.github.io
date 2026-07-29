@@ -274,6 +274,10 @@ function saveState() {
   scheduleDriveAutoSave();
 }
 
+function persistStateWithoutTouchingSyncTime() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
 function loadDriveMeta() {
   try {
     return JSON.parse(localStorage.getItem(DRIVE_META_KEY)) || { fileId: "", autoSync: false, lastSync: "" };
@@ -453,6 +457,7 @@ async function loadFromDrive(options = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   isApplyingRemoteState = false;
   driveMeta.lastSync = new Date().toISOString();
+  driveMeta.lastRemoteUpdatedAt = remote.updatedAt || "";
   saveDriveMeta();
   renderSettings();
   renderCalendar();
@@ -465,12 +470,15 @@ async function saveToDrive() {
   state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const fileId = await getDriveFileId();
-  await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+  const response = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=modifiedTime`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json; charset=UTF-8" },
     body: JSON.stringify(state, null, 2)
   });
+  const data = await response.json().catch(() => ({}));
   driveMeta.lastSync = new Date().toISOString();
+  driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
+  driveMeta.lastRemoteUpdatedAt = state.updatedAt;
   saveDriveMeta();
   setDriveStatus(`Drive에 전체 데이터(설정/잠금 포함)를 저장했습니다. ${new Date().toLocaleTimeString("ko-KR")}`);
 }
@@ -820,7 +828,7 @@ function keyInRange(key, startDate, endDate) {
 }
 
 function isAttendanceCredit(key, record) {
-  if (record?.worked || record?.type === "vacation") return true;
+  if (record?.worked || record?.type === "vacation" || record?.type === "substituteHoliday") return true;
   const date = dateFromKey(key);
   return isPaidHoliday(date) && isEmployedOn(date);
 }
@@ -853,7 +861,8 @@ function monthlyLeaveEntitlement(asOf = today) {
     if (end > asOf) break;
     const expected = expectedWorkdaysInRange(start, end);
     const attended = attendanceCreditsInRange(start, end);
-    if (expected > 0 && attended >= expected) earned += 1;
+    const required = Math.max(1, Math.min(expected, 15));
+    if (expected > 0 && attended >= required) earned += 1;
   }
   return earned;
 }
@@ -1539,7 +1548,7 @@ if ("serviceWorker" in navigator) {
     .catch(() => {});
 }
 
-saveState();
+persistStateWithoutTouchingSyncTime();
 updateDriveControls();
 renderSettings();
 renderCalendar();
