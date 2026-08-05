@@ -191,7 +191,8 @@ async function unlockApp(password) {
 
 function defaultState() {
   return {
-    updatedAt: new Date().toISOString(),
+    // A fresh device has no user change yet, so Drive data must take priority.
+    updatedAt: "",
     settings: {
       hourlyWage: 10030,
       defaultStart: "09:00",
@@ -225,7 +226,7 @@ function normalizeState(raw) {
   Object.entries(raw?.journals || {}).forEach(([key, entries]) => {
     journals[key] = normalizeJournalEntries(entries);
   });
-  return { updatedAt: raw?.updatedAt || new Date().toISOString(), settings, days, journals };
+  return { updatedAt: raw?.updatedAt || "", settings, days, journals };
 }
 
 function normalizeJournalEntries(entries) {
@@ -375,6 +376,7 @@ async function ensureDriveToken(prompt = "", options = {}) {
 async function driveFetch(url, options = {}) {
   const token = await ensureDriveToken("", { allowPopup: false });
   const response = await fetch(url, {
+    cache: "no-store",
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -445,12 +447,16 @@ async function loadFromDrive(options = {}) {
   setDriveStatus("Drive에서 불러오는 중...");
   const fileId = await getDriveFileId();
   const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-  const remote = normalizeState(await response.json());
-  const localTime = Date.parse(state.updatedAt || 0);
-  const remoteTime = Date.parse(remote.updatedAt || 0);
+  const rawRemote = await response.json();
+  if (!rawRemote || typeof rawRemote !== "object" || !rawRemote.settings || !rawRemote.days) {
+    throw new Error("Drive 파일 형식이 올바르지 않습니다.");
+  }
+  const remote = normalizeState(rawRemote);
+  const localTime = Date.parse(state.updatedAt || "") || 0;
+  const remoteTime = Date.parse(remote.updatedAt || "") || 0;
   if (!options.force && remoteTime < localTime && !confirm("현재 기기 데이터가 Drive보다 최신입니다. 그래도 Drive 데이터로 덮어쓸까요?")) {
     setDriveStatus("Drive 불러오기를 취소했습니다.");
-    return;
+    return false;
   }
   isApplyingRemoteState = true;
   state = remote;
@@ -462,7 +468,11 @@ async function loadFromDrive(options = {}) {
   renderSettings();
   renderCalendar();
   applyLockScreen();
-  setDriveStatus(`Drive에서 전체 데이터(설정/잠금 포함)를 불러왔습니다. ${new Date().toLocaleTimeString("ko-KR")}`);
+  const recordKeys = [...new Set([...Object.keys(remote.days), ...Object.keys(remote.journals)])].sort();
+  const latestRecord = recordKeys.at(-1);
+  const latestText = latestRecord ? ` 마지막 기록 ${latestRecord.replaceAll("-", ". ")}.` : " 저장된 기록이 없습니다.";
+  setDriveStatus(`Drive 불러오기 완료.${latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
+  return true;
 }
 
 async function saveToDrive() {
@@ -1494,7 +1504,7 @@ els.driveConnect.addEventListener("click", async () => {
 
 els.driveLoad.addEventListener("click", async () => {
   try {
-    await ensureDriveToken("", { allowPopup: false });
+    await ensureDriveToken("");
     await loadFromDrive({ force: true });
   } catch (error) {
     setDriveStatus(`Drive 불러오기 실패: ${error.message}`);
@@ -1503,7 +1513,7 @@ els.driveLoad.addEventListener("click", async () => {
 
 els.driveSave.addEventListener("click", async () => {
   try {
-    await ensureDriveToken("", { allowPopup: false });
+    await ensureDriveToken("");
     await saveToDrive();
   } catch (error) {
     setDriveStatus(`Drive 저장 실패: ${error.message}`);
