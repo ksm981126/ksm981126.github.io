@@ -19,6 +19,9 @@ let accessToken = loadStoredDriveToken();
 let autoSaveTimer = null;
 let isApplyingRemoteState = false;
 let driveMeta = loadDriveMeta();
+let installPromptEvent = null;
+let driveOperationQueue = Promise.resolve();
+let lastDriveRefreshAt = 0;
 
 const els = {
   settingsPanel: document.querySelector("#settingsPanel"),
@@ -73,6 +76,7 @@ const els = {
   driveSave: document.querySelector("#driveSave"),
   driveAutoSync: document.querySelector("#driveAutoSync"),
   driveStatus: document.querySelector("#driveStatus"),
+  installApp: document.querySelector("#installApp"),
   salaryDialog: document.querySelector("#salaryDialog"),
   queryYear: document.querySelector("#queryYear"),
   queryMonth: document.querySelector("#queryMonth"),
@@ -443,20 +447,60 @@ async function getDriveFileId() {
   return (await findDriveFile()) || (await createDriveFile());
 }
 
-async function loadFromDrive(options = {}) {
-  setDriveStatus("Drive에서 불러오는 중...");
-  const fileId = await getDriveFileId();
+function queueDriveOperation(operation) {
+  const pending = driveOperationQueue.then(operation, operation);
+  driveOperationQueue = pending.catch(() => {});
+  return pending;
+}
+
+function recordSummary(value) {
+  const recordKeys = [...new Set([...Object.keys(value.days), ...Object.keys(value.journals)])].sort();
+  const latestRecord = recordKeys.at(-1) || "";
+  const latestText = latestRecord ? `마지막 기록 ${latestRecord.replaceAll("-", ". ")}.` : "저장된 기록이 없습니다.";
+  return { count: recordKeys.length, latestRecord, latestText };
+}
+
+async function downloadDriveState(fileId) {
   const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
   const rawRemote = await response.json();
   if (!rawRemote || typeof rawRemote !== "object" || !rawRemote.settings || !rawRemote.days) {
     throw new Error("Drive 파일 형식이 올바르지 않습니다.");
   }
-  const remote = normalizeState(rawRemote);
+  return normalizeState(rawRemote);
+}
+
+function sameStatePayload(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeStateForDriveSave(remote, local) {
+  return normalizeState({
+    updatedAt: local.updatedAt,
+    settings: local.settings,
+    days: { ...remote.days, ...local.days },
+    journals: { ...remote.journals, ...local.journals }
+  });
+}
+
+function loadFromDrive(options = {}) {
+  return queueDriveOperation(() => loadFromDriveNow(options));
+}
+
+async function loadFromDriveNow(options = {}) {
+  setDriveStatus("Drive에서 불러오는 중...");
+  const fileId = await getDriveFileId();
+  const remote = await downloadDriveState(fileId);
   const localTime = Date.parse(state.updatedAt || "") || 0;
   const remoteTime = Date.parse(remote.updatedAt || "") || 0;
-  if (!options.force && remoteTime < localTime && !confirm("현재 기기 데이터가 Drive보다 최신입니다. 그래도 Drive 데이터로 덮어쓸까요?")) {
-    setDriveStatus("Drive 불러오기를 취소했습니다.");
-    return false;
+  if (!options.force && remoteTime < localTime) {
+    if (options.silent) {
+      setDriveStatus("이 기기에 아직 Drive에 저장하지 않은 변경사항이 있어 자동 불러오기를 건너뛰었습니다.");
+      return false;
+    }
+    if (!confirm("현재 기기 데이터가 Drive보다 최신입니다. 그래도 Drive 데이터로 덮어쓸까요?")) {
+      setDriveStatus("Drive 불러오기를 취소했습니다.");
+      return false;
+    }
   }
   isApplyingRemoteState = true;
   state = remote;
@@ -468,29 +512,51 @@ async function loadFromDrive(options = {}) {
   renderSettings();
   renderCalendar();
   applyLockScreen();
-  const recordKeys = [...new Set([...Object.keys(remote.days), ...Object.keys(remote.journals)])].sort();
-  const latestRecord = recordKeys.at(-1);
-  const latestText = latestRecord ? ` 마지막 기록 ${latestRecord.replaceAll("-", ". ")}.` : " 저장된 기록이 없습니다.";
-  setDriveStatus(`Drive 불러오기 완료.${latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
+  const summary = recordSummary(remote);
+  lastDriveRefreshAt = Date.now();
+  setDriveStatus(`Drive 불러오기 완료. ${summary.latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
   return true;
 }
 
-async function saveToDrive() {
+function saveToDrive() {
+  return queueDriveOperation(saveToDriveNow);
+}
+
+async function saveToDriveNow() {
   setDriveStatus("Drive에 저장하는 중...");
   state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const snapshot = normalizeState(JSON.parse(JSON.stringify(state)));
   const fileId = await getDriveFileId();
+  const remoteBeforeSave = await downloadDriveState(fileId);
+  const remoteChanged = Boolean(remoteBeforeSave.updatedAt)
+    && remoteBeforeSave.updatedAt !== driveMeta.lastRemoteUpdatedAt
+    && remoteBeforeSave.updatedAt !== snapshot.updatedAt;
+  const uploadState = remoteChanged ? mergeStateForDriveSave(remoteBeforeSave, snapshot) : snapshot;
   const response = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=modifiedTime`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json; charset=UTF-8" },
-    body: JSON.stringify(state, null, 2)
+    body: JSON.stringify(uploadState, null, 2)
   });
   const data = await response.json().catch(() => ({}));
+  const verified = await downloadDriveState(fileId);
+  if (!sameStatePayload(verified, uploadState)) {
+    throw new Error("업로드한 내용과 Drive 원본이 일치하지 않습니다. 다시 저장해주세요.");
+  }
+  if (remoteChanged) {
+    state.days = { ...verified.days, ...state.days };
+    state.journals = { ...verified.journals, ...state.journals };
+    persistStateWithoutTouchingSyncTime();
+    renderCalendar();
+  }
   driveMeta.lastSync = new Date().toISOString();
   driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
-  driveMeta.lastRemoteUpdatedAt = state.updatedAt;
+  driveMeta.lastRemoteUpdatedAt = uploadState.updatedAt;
   saveDriveMeta();
-  setDriveStatus(`Drive에 전체 데이터(설정/잠금 포함)를 저장했습니다. ${new Date().toLocaleTimeString("ko-KR")}`);
+  const summary = recordSummary(verified);
+  lastDriveRefreshAt = Date.now();
+  setDriveStatus(`Drive 저장 확인 완료. ${summary.latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
+  return summary;
 }
 
 function scheduleDriveAutoSave() {
@@ -1531,7 +1597,6 @@ els.driveAutoSync.addEventListener("change", async () => {
   try {
     await ensureDriveToken("");
     await loadFromDrive();
-    scheduleDriveAutoSave();
   } catch (error) {
     driveMeta.autoSync = false;
     saveDriveMeta();
@@ -1539,6 +1604,33 @@ els.driveAutoSync.addEventListener("change", async () => {
     setDriveStatus(`자동 동기화 시작 실패: ${error.message}`);
   }
 });
+
+if (els.installApp) {
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  els.installApp.hidden = standalone;
+
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installPromptEvent = event;
+    els.installApp.hidden = false;
+  });
+
+  window.addEventListener("appinstalled", () => {
+    installPromptEvent = null;
+    els.installApp.hidden = true;
+  });
+
+  els.installApp.addEventListener("click", async () => {
+    if (!installPromptEvent) {
+      alert("Chrome에서 페이지를 새로고침한 뒤 잠시 기다렸다가 다시 눌러주세요. 이미 설치되어 있다면 기존 홈 화면 앱이 새 버전으로 자동 업데이트됩니다.");
+      return;
+    }
+    await installPromptEvent.prompt();
+    const choice = await installPromptEvent.userChoice;
+    if (choice.outcome === "accepted") els.installApp.hidden = true;
+    installPromptEvent = null;
+  });
+}
 
 async function startDriveAutoSync() {
   if (!driveMeta.autoSync) return;
@@ -1548,12 +1640,26 @@ async function startDriveAutoSync() {
   }
   try {
     setDriveStatus("자동 동기화 중: Drive에서 최신 데이터를 확인합니다...");
-    await loadFromDrive();
-    scheduleDriveAutoSave();
+    await loadFromDrive({ silent: true });
   } catch (error) {
     setDriveStatus(`자동 동기화 실패: ${error.message}`);
   }
 }
+
+function refreshDriveWhenActive() {
+  if (!driveMeta.autoSync || !accessToken || document.hidden) return;
+  if (Date.now() - lastDriveRefreshAt < 15000) return;
+  lastDriveRefreshAt = Date.now();
+  loadFromDrive({ silent: true }).catch((error) => {
+    setDriveStatus(`자동 동기화 실패: ${error.message}`);
+  });
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshDriveWhenActive();
+});
+window.addEventListener("focus", refreshDriveWhenActive);
+setInterval(refreshDriveWhenActive, 60000);
 
 if ("serviceWorker" in navigator) {
   let refreshedByNewWorker = false;

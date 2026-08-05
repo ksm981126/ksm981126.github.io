@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=drive-sync-v22">
+  <link rel="stylesheet" href="styles.css?v=pwa-install-v23">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -51,6 +51,7 @@
         <label class="file-btn">가져오기<input id="importData" type="file" accept="application/json"></label>
       </div>
       <div class="sync-tools">
+        <button id="installApp" type="button" class="ghost-btn">휴대폰에 앱 설치</button>
         <button id="driveConnect" type="button" class="primary-btn">Google Drive 연결</button>
         <button id="driveLoad" type="button" class="ghost-btn">Drive에서 불러오기</button>
         <button id="driveSave" type="button" class="ghost-btn">Drive에 저장</button>
@@ -142,6 +143,6 @@
   </dialog>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="app.js?v=drive-sync-v22"></script>
+  <script src="app.js?v=pwa-install-v23"></script>
 </body>
 </html>

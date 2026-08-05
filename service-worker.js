@@ -1,11 +1,13 @@
-const CACHE_NAME = "salary-calendar-offline-v27";
+const CACHE_NAME = "salary-calendar-offline-v28";
 const FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=drive-sync-v22",
-  "./app.js?v=drive-sync-v22",
+  "./styles.css?v=pwa-install-v23",
+  "./app.js?v=pwa-install-v23",
   "./manifest.webmanifest",
-  "./icon.svg"
+  "./icon.svg",
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
