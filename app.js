@@ -482,6 +482,21 @@ function sameStatePayload(left, right) {
   return JSON.stringify(canonicalValue(left)) === JSON.stringify(canonicalValue(right));
 }
 
+function firstDifferencePath(left, right, path = "data") {
+  if (Object.is(left, right)) return "";
+  if (typeof left !== typeof right || left === null || right === null) return path;
+  if (typeof left !== "object") return path;
+  if (Array.isArray(left) !== Array.isArray(right)) return path;
+  if (Array.isArray(left) && left.length !== right.length) return `${path}.length`;
+  const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort();
+  for (const key of keys) {
+    if (!(key in left) || !(key in right)) return `${path}.${key}`;
+    const difference = firstDifferencePath(left[key], right[key], `${path}.${key}`);
+    if (difference) return difference;
+  }
+  return "";
+}
+
 async function verifyDriveUpload(fileId, expected) {
   let verified = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -489,7 +504,7 @@ async function verifyDriveUpload(fileId, expected) {
     verified = await downloadDriveState(fileId);
     if (sameStatePayload(verified, expected)) return verified;
   }
-  throw new Error("업로드한 내용과 Drive 원본이 일치하지 않습니다. 다시 저장해주세요.");
+  throw new Error(`업로드한 내용과 Drive 원본의 ${firstDifferencePath(verified, expected)} 항목이 일치하지 않습니다.`);
 }
 
 function mergeStateForDriveSave(remote, local) {
