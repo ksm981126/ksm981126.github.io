@@ -6,6 +6,7 @@ const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
+const APP_VERSION = "sync-v27";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -77,6 +78,7 @@ const els = {
   driveAutoSync: document.querySelector("#driveAutoSync"),
   driveStatus: document.querySelector("#driveStatus"),
   installApp: document.querySelector("#installApp"),
+  appVersion: document.querySelector("#appVersion"),
   salaryDialog: document.querySelector("#salaryDialog"),
   queryYear: document.querySelector("#queryYear"),
   queryMonth: document.querySelector("#queryMonth"),
@@ -566,10 +568,7 @@ async function saveToDriveNow() {
   const snapshot = normalizeState(JSON.parse(JSON.stringify(state)));
   const fileId = await getDriveFileId();
   const remoteBeforeSave = await downloadDriveState(fileId);
-  const remoteChanged = Boolean(remoteBeforeSave.updatedAt)
-    && remoteBeforeSave.updatedAt !== driveMeta.lastRemoteUpdatedAt
-    && remoteBeforeSave.updatedAt !== snapshot.updatedAt;
-  const uploadState = remoteChanged ? mergeStateForDriveSave(remoteBeforeSave, snapshot) : snapshot;
+  const uploadState = mergeStateForDriveSave(remoteBeforeSave, snapshot);
   const response = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=modifiedTime`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json; charset=UTF-8" },
@@ -577,12 +576,10 @@ async function saveToDriveNow() {
   });
   const data = await response.json().catch(() => ({}));
   const verified = await verifyDriveUpload(fileId, uploadState);
-  if (remoteChanged) {
-    state.days = { ...verified.days, ...state.days };
-    state.journals = { ...verified.journals, ...state.journals };
-    persistStateWithoutTouchingSyncTime();
-    renderCalendar();
-  }
+  state.days = { ...verified.days, ...state.days };
+  state.journals = { ...verified.journals, ...state.journals };
+  persistStateWithoutTouchingSyncTime();
+  renderCalendar();
   driveMeta.lastSync = new Date().toISOString();
   driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
   driveMeta.lastRemoteUpdatedAt = verified.updatedAt || uploadState.updatedAt;
@@ -1708,6 +1705,7 @@ if ("serviceWorker" in navigator) {
 }
 
 persistStateWithoutTouchingSyncTime();
+if (els.appVersion) els.appVersion.textContent = `앱 버전 ${APP_VERSION}`;
 updateDriveControls();
 renderSettings();
 renderCalendar();
