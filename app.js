@@ -6,7 +6,7 @@ const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
-const APP_VERSION = "sync-v28";
+const APP_VERSION = "sync-v29";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -179,6 +179,7 @@ async function setAppPassword(password) {
   const salt = randomSalt();
   state.settings.passwordSalt = salt;
   state.settings.passwordHash = await passwordHash(password, salt);
+  markSettingsChanged();
   saveState();
   rememberTrustedDevice();
   applyLockScreen();
@@ -217,8 +218,32 @@ function defaultState() {
       passwordSalt: ""
     },
     days: {},
-    journals: {}
+    journals: {},
+    syncMeta: {
+      settingsUpdatedAt: "",
+      days: {},
+      journals: {}
+    }
   };
+}
+
+function normalizeSyncEntry(meta, fallbackUpdatedAt = "") {
+  return {
+    updatedAt: String(meta?.updatedAt || fallbackUpdatedAt || ""),
+    deleted: Boolean(meta?.deleted)
+  };
+}
+
+function normalizeSyncMap(rawMap, records, fallbackUpdatedAt) {
+  const result = {};
+  Object.entries(rawMap || {}).forEach(([key, meta]) => {
+    result[key] = normalizeSyncEntry(meta, fallbackUpdatedAt);
+  });
+  Object.keys(records).forEach((key) => {
+    if (!result[key]) result[key] = normalizeSyncEntry(null, fallbackUpdatedAt);
+    if (result[key].deleted) delete records[key];
+  });
+  return result;
 }
 
 function normalizeState(raw) {
@@ -232,7 +257,13 @@ function normalizeState(raw) {
   Object.entries(raw?.journals || {}).forEach(([key, entries]) => {
     journals[key] = normalizeJournalEntries(entries);
   });
-  return { updatedAt: raw?.updatedAt || "", settings, days, journals };
+  const fallbackUpdatedAt = raw?.updatedAt || "";
+  const syncMeta = {
+    settingsUpdatedAt: String(raw?.syncMeta?.settingsUpdatedAt || fallbackUpdatedAt),
+    days: normalizeSyncMap(raw?.syncMeta?.days, days, fallbackUpdatedAt),
+    journals: normalizeSyncMap(raw?.syncMeta?.journals, journals, fallbackUpdatedAt)
+  };
+  return { updatedAt: fallbackUpdatedAt, settings, days, journals, syncMeta };
 }
 
 function normalizeJournalEntries(entries) {
@@ -279,6 +310,18 @@ function saveState() {
   if (!isApplyingRemoteState) state.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   scheduleDriveAutoSave();
+}
+
+function markSettingsChanged() {
+  state.syncMeta.settingsUpdatedAt = new Date().toISOString();
+}
+
+function markDayChanged(key, deleted = false) {
+  state.syncMeta.days[key] = { updatedAt: new Date().toISOString(), deleted };
+}
+
+function markJournalChanged(key, deleted = false) {
+  state.syncMeta.journals[key] = { updatedAt: new Date().toISOString(), deleted };
 }
 
 function persistStateWithoutTouchingSyncTime() {
@@ -498,7 +541,12 @@ function canonicalValue(value) {
 }
 
 function sameStatePayload(left, right) {
-  const comparable = (value) => ({ settings: value.settings, days: value.days, journals: value.journals });
+  const comparable = (value) => ({
+    settings: value.settings,
+    days: value.days,
+    journals: value.journals,
+    syncMeta: value.syncMeta
+  });
   return JSON.stringify(canonicalValue(comparable(left))) === JSON.stringify(canonicalValue(comparable(right)));
 }
 
@@ -524,17 +572,77 @@ async function verifyDriveUpload(fileId, expected) {
     verified = await downloadDriveState(fileId);
     if (sameStatePayload(verified, expected)) return verified;
   }
-  const verifiedData = { settings: verified.settings, days: verified.days, journals: verified.journals };
-  const expectedData = { settings: expected.settings, days: expected.days, journals: expected.journals };
+  const verifiedData = {
+    settings: verified.settings,
+    days: verified.days,
+    journals: verified.journals,
+    syncMeta: verified.syncMeta
+  };
+  const expectedData = {
+    settings: expected.settings,
+    days: expected.days,
+    journals: expected.journals,
+    syncMeta: expected.syncMeta
+  };
   throw new Error(`업로드한 내용과 Drive 원본의 ${firstDifferencePath(verifiedData, expectedData)} 항목이 일치하지 않습니다.`);
 }
 
+function syncTime(meta) {
+  return Date.parse(meta?.updatedAt || "") || 0;
+}
+
+function mergeRecordCollection(remoteRecords, localRecords, remoteMeta, localMeta) {
+  const records = {};
+  const meta = {};
+  const keys = [...new Set([
+    ...Object.keys(remoteRecords),
+    ...Object.keys(localRecords),
+    ...Object.keys(remoteMeta),
+    ...Object.keys(localMeta)
+  ])];
+
+  keys.forEach((key) => {
+    const remoteEntry = remoteMeta[key] || null;
+    const localEntry = localMeta[key] || null;
+    const useLocal = !remoteEntry || (localEntry && syncTime(localEntry) >= syncTime(remoteEntry));
+    const selectedMeta = normalizeSyncEntry(useLocal ? localEntry : remoteEntry);
+    const selectedRecord = useLocal ? localRecords[key] : remoteRecords[key];
+
+    meta[key] = selectedMeta;
+    if (!selectedMeta.deleted && selectedRecord) records[key] = selectedRecord;
+  });
+
+  return { records, meta };
+}
+
 function mergeStateForDriveSave(remote, local) {
+  const mergedDays = mergeRecordCollection(
+    remote.days,
+    local.days,
+    remote.syncMeta.days,
+    local.syncMeta.days
+  );
+  const mergedJournals = mergeRecordCollection(
+    remote.journals,
+    local.journals,
+    remote.syncMeta.journals,
+    local.syncMeta.journals
+  );
+  const useLocalSettings = syncTime({ updatedAt: local.syncMeta.settingsUpdatedAt })
+    >= syncTime({ updatedAt: remote.syncMeta.settingsUpdatedAt });
+
   return normalizeState({
     updatedAt: local.updatedAt,
-    settings: local.settings,
-    days: { ...remote.days, ...local.days },
-    journals: { ...remote.journals, ...local.journals }
+    settings: useLocalSettings ? local.settings : remote.settings,
+    days: mergedDays.records,
+    journals: mergedJournals.records,
+    syncMeta: {
+      settingsUpdatedAt: useLocalSettings
+        ? local.syncMeta.settingsUpdatedAt
+        : remote.syncMeta.settingsUpdatedAt,
+      days: mergedDays.meta,
+      journals: mergedJournals.meta
+    }
   });
 }
 
@@ -588,9 +696,9 @@ async function saveToDriveNow() {
   const uploadState = mergeStateForDriveSave(remoteBeforeSave, snapshot);
   const data = await createDriveSnapshot(uploadState);
   const verified = await verifyDriveUpload(data.id, uploadState);
-  state.days = { ...verified.days, ...state.days };
-  state.journals = { ...verified.journals, ...state.journals };
+  state = mergeStateForDriveSave(verified, state);
   persistStateWithoutTouchingSyncTime();
+  renderSettings();
   renderCalendar();
   driveMeta.fileId = data.id;
   driveMeta.lastSync = new Date().toISOString();
@@ -1326,6 +1434,7 @@ els.form.addEventListener("submit", (event) => {
     taxFreeMonthly: Number(els.taxFreeMonthly.value || 0),
     dependents: Number(els.dependents.value || 1)
   };
+  markSettingsChanged();
   saveState();
   renderCalendar();
   closeSettingsPanel();
@@ -1383,6 +1492,7 @@ els.dayForm.addEventListener("submit", (event) => {
     showLegalWorkAlert(selectedDateKey, record);
   }
   state.days[selectedDateKey] = record;
+  markDayChanged(selectedDateKey);
   saveState();
   els.dialog.close();
   renderCalendar();
@@ -1398,6 +1508,7 @@ els.vacationDay.addEventListener("click", () => {
     return;
   }
   state.days[selectedDateKey] = { type: "vacation", worked: false, wage: Number(els.dayWage.value || state.settings.hourlyWage) };
+  markDayChanged(selectedDateKey);
   saveState();
   els.dialog.close();
   renderCalendar();
@@ -1405,6 +1516,7 @@ els.vacationDay.addEventListener("click", () => {
 
 els.deleteDay.addEventListener("click", () => {
   delete state.days[selectedDateKey];
+  markDayChanged(selectedDateKey, true);
   saveState();
   els.dialog.close();
   renderCalendar();
@@ -1427,8 +1539,13 @@ els.journalEntries.addEventListener("click", (event) => {
 els.journalForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const entries = readJournalForm();
-  if (entries.length) state.journals[selectedDateKey] = entries;
-  else delete state.journals[selectedDateKey];
+  if (entries.length) {
+    state.journals[selectedDateKey] = entries;
+    markJournalChanged(selectedDateKey);
+  } else {
+    delete state.journals[selectedDateKey];
+    markJournalChanged(selectedDateKey, true);
+  }
   saveState();
   els.journalDialog.close();
   renderCalendar();
@@ -1436,6 +1553,7 @@ els.journalForm.addEventListener("submit", (event) => {
 
 els.deleteJournal.addEventListener("click", () => {
   delete state.journals[selectedDateKey];
+  markJournalChanged(selectedDateKey, true);
   saveState();
   els.journalDialog.close();
   renderCalendar();
