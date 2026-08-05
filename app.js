@@ -479,7 +479,8 @@ function canonicalValue(value) {
 }
 
 function sameStatePayload(left, right) {
-  return JSON.stringify(canonicalValue(left)) === JSON.stringify(canonicalValue(right));
+  const comparable = (value) => ({ settings: value.settings, days: value.days, journals: value.journals });
+  return JSON.stringify(canonicalValue(comparable(left))) === JSON.stringify(canonicalValue(comparable(right)));
 }
 
 function firstDifferencePath(left, right, path = "data") {
@@ -504,7 +505,9 @@ async function verifyDriveUpload(fileId, expected) {
     verified = await downloadDriveState(fileId);
     if (sameStatePayload(verified, expected)) return verified;
   }
-  throw new Error(`업로드한 내용과 Drive 원본의 ${firstDifferencePath(verified, expected)} 항목이 일치하지 않습니다.`);
+  const verifiedData = { settings: verified.settings, days: verified.days, journals: verified.journals };
+  const expectedData = { settings: expected.settings, days: expected.days, journals: expected.journals };
+  throw new Error(`업로드한 내용과 Drive 원본의 ${firstDifferencePath(verifiedData, expectedData)} 항목이 일치하지 않습니다.`);
 }
 
 function mergeStateForDriveSave(remote, local) {
@@ -582,7 +585,7 @@ async function saveToDriveNow() {
   }
   driveMeta.lastSync = new Date().toISOString();
   driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
-  driveMeta.lastRemoteUpdatedAt = uploadState.updatedAt;
+  driveMeta.lastRemoteUpdatedAt = verified.updatedAt || uploadState.updatedAt;
   saveDriveMeta();
   const summary = recordSummary(verified);
   lastDriveRefreshAt = Date.now();
