@@ -6,7 +6,7 @@ const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
-const APP_VERSION = "sync-v29";
+const APP_VERSION = "sync-v30";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -438,27 +438,41 @@ async function driveFetch(url, options = {}) {
   }
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Drive 요청 실패: ${response.status}`);
+    const error = new Error(text || `Drive 요청 실패: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return response;
 }
 
-async function findDriveFile() {
+async function listDriveFiles() {
   const query = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
   const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)&pageSize=10`;
   const response = await driveFetch(url);
   const data = await response.json();
-  const file = data.files?.[0];
-  if (file?.id) {
-    driveMeta.fileId = file.id;
-    driveMeta.lastRemoteModified = file.modifiedTime || "";
-    saveDriveMeta();
-    return file.id;
+  return data.files || [];
+}
+
+async function findDriveFile() {
+  return (await listDriveFiles())[0] || null;
+}
+
+async function getDriveFileInfo(fileId) {
+  if (!fileId) return null;
+  try {
+    const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,modifiedTime,trashed`);
+    const file = await response.json();
+    return file.trashed || file.name !== DRIVE_FILE_NAME ? null : file;
+  } catch (error) {
+    if (error.status === 404) return null;
+    throw error;
   }
-  driveMeta.fileId = "";
-  driveMeta.lastRemoteModified = "";
+}
+
+function rememberDriveFile(file) {
+  driveMeta.fileId = file?.id || "";
+  driveMeta.lastRemoteModified = file?.modifiedTime || "";
   saveDriveMeta();
-  return "";
 }
 
 async function createDriveSnapshot(payload) {
@@ -505,8 +519,25 @@ async function trashDriveFile(fileId) {
   });
 }
 
+async function cleanupOldDriveSnapshots(keepId) {
+  const files = await listDriveFiles();
+  await Promise.allSettled(
+    files.filter((file) => file.id !== keepId).map((file) => trashDriveFile(file.id))
+  );
+}
+
 async function getDriveFileId() {
-  return (await findDriveFile()) || (await createDriveFile());
+  const cachedFile = await getDriveFileInfo(driveMeta.fileId);
+  const latestFile = await findDriveFile();
+  const candidates = [cachedFile, latestFile]
+    .filter((file, index, files) => file?.id && files.findIndex((item) => item?.id === file.id) === index)
+    .sort((left, right) => (Date.parse(right.modifiedTime || "") || 0) - (Date.parse(left.modifiedTime || "") || 0));
+  const selected = candidates[0];
+  if (selected) {
+    rememberDriveFile(selected);
+    return selected.id;
+  }
+  return createDriveFile();
 }
 
 function queueDriveOperation(operation) {
@@ -705,7 +736,7 @@ async function saveToDriveNow() {
   driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
   driveMeta.lastRemoteUpdatedAt = verified.updatedAt || uploadState.updatedAt;
   saveDriveMeta();
-  trashDriveFile(fileId).catch(() => {});
+  await cleanupOldDriveSnapshots(data.id);
   const summary = recordSummary(verified);
   lastDriveRefreshAt = Date.now();
   setDriveStatus(`Drive 저장 확인 완료. ${summary.latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
