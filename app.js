@@ -6,7 +6,7 @@ const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
-const APP_VERSION = "sync-v27";
+const APP_VERSION = "sync-v28";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -418,8 +418,12 @@ async function findDriveFile() {
   return "";
 }
 
-async function createDriveFile() {
-  const metadata = { name: DRIVE_FILE_NAME, mimeType: "application/json" };
+async function createDriveSnapshot(payload) {
+  const metadata = {
+    name: DRIVE_FILE_NAME,
+    mimeType: "application/json",
+    appProperties: { salaryCalendar: "snapshot" }
+  };
   const boundary = "salary_calendar_boundary";
   const body = [
     `--${boundary}`,
@@ -429,7 +433,7 @@ async function createDriveFile() {
     `--${boundary}`,
     "Content-Type: application/json; charset=UTF-8",
     "",
-    JSON.stringify(state, null, 2),
+    JSON.stringify(payload, null, 2),
     `--${boundary}--`
   ].join("\r\n");
   const response = await driveFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime", {
@@ -437,12 +441,25 @@ async function createDriveFile() {
     headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
     body
   });
-  const data = await response.json();
+  return response.json();
+}
+
+async function createDriveFile() {
+  const data = await createDriveSnapshot(state);
   driveMeta.fileId = data.id;
   driveMeta.lastSync = new Date().toISOString();
   driveMeta.lastRemoteModified = data.modifiedTime || "";
   saveDriveMeta();
   return data.id;
+}
+
+async function trashDriveFile(fileId) {
+  if (!fileId) return;
+  await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json; charset=UTF-8" },
+    body: JSON.stringify({ trashed: true })
+  });
 }
 
 async function getDriveFileId() {
@@ -569,21 +586,18 @@ async function saveToDriveNow() {
   const fileId = await getDriveFileId();
   const remoteBeforeSave = await downloadDriveState(fileId);
   const uploadState = mergeStateForDriveSave(remoteBeforeSave, snapshot);
-  const response = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=modifiedTime`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json; charset=UTF-8" },
-    body: JSON.stringify(uploadState, null, 2)
-  });
-  const data = await response.json().catch(() => ({}));
-  const verified = await verifyDriveUpload(fileId, uploadState);
+  const data = await createDriveSnapshot(uploadState);
+  const verified = await verifyDriveUpload(data.id, uploadState);
   state.days = { ...verified.days, ...state.days };
   state.journals = { ...verified.journals, ...state.journals };
   persistStateWithoutTouchingSyncTime();
   renderCalendar();
+  driveMeta.fileId = data.id;
   driveMeta.lastSync = new Date().toISOString();
   driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
   driveMeta.lastRemoteUpdatedAt = verified.updatedAt || uploadState.updatedAt;
   saveDriveMeta();
+  trashDriveFile(fileId).catch(() => {});
   const summary = recordSummary(verified);
   lastDriveRefreshAt = Date.now();
   setDriveStatus(`Drive 저장 확인 완료. ${summary.latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
