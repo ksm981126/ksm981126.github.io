@@ -469,8 +469,27 @@ async function downloadDriveState(fileId) {
   return normalizeState(rawRemote);
 }
 
+function canonicalValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.keys(value).sort().reduce((result, key) => {
+    result[key] = canonicalValue(value[key]);
+    return result;
+  }, {});
+}
+
 function sameStatePayload(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return JSON.stringify(canonicalValue(left)) === JSON.stringify(canonicalValue(right));
+}
+
+async function verifyDriveUpload(fileId, expected) {
+  let verified = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    verified = await downloadDriveState(fileId);
+    if (sameStatePayload(verified, expected)) return verified;
+  }
+  throw new Error("업로드한 내용과 Drive 원본이 일치하지 않습니다. 다시 저장해주세요.");
 }
 
 function mergeStateForDriveSave(remote, local) {
@@ -539,10 +558,7 @@ async function saveToDriveNow() {
     body: JSON.stringify(uploadState, null, 2)
   });
   const data = await response.json().catch(() => ({}));
-  const verified = await downloadDriveState(fileId);
-  if (!sameStatePayload(verified, uploadState)) {
-    throw new Error("업로드한 내용과 Drive 원본이 일치하지 않습니다. 다시 저장해주세요.");
-  }
+  const verified = await verifyDriveUpload(fileId, uploadState);
   if (remoteChanged) {
     state.days = { ...verified.days, ...state.days };
     state.journals = { ...verified.journals, ...state.journals };
