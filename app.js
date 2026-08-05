@@ -1,12 +1,12 @@
 const STORAGE_KEY = "salary-calendar-v4";
 const OLD_KEYS = ["salary-calendar-v3", "salary-calendar-v2", "salary-calendar-v1"];
 const GOOGLE_CLIENT_ID = "583902313340-iphddiep3ami3h3ugsef7de5l7v9p9c9.apps.googleusercontent.com";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
-const APP_VERSION = "sync-v30";
+const APP_VERSION = "sync-v31";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -343,7 +343,7 @@ function saveDriveMeta() {
 function loadStoredDriveToken() {
   try {
     const saved = JSON.parse(localStorage.getItem(DRIVE_TOKEN_KEY) || "{}");
-    if (saved.accessToken && saved.expiresAt && Number(saved.expiresAt) > Date.now() + 120000) {
+    if (saved.scope === DRIVE_SCOPE && saved.accessToken && saved.expiresAt && Number(saved.expiresAt) > Date.now() + 120000) {
       return saved.accessToken;
     }
   } catch {}
@@ -355,6 +355,7 @@ function rememberDriveToken(token, expiresIn = 3600) {
   accessToken = token;
   localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({
     accessToken: token,
+    scope: DRIVE_SCOPE,
     expiresAt: Date.now() + Math.max(60, Number(expiresIn || 3600) - 120) * 1000
   }));
   updateDriveControls();
@@ -447,7 +448,7 @@ async function driveFetch(url, options = {}) {
 
 async function listDriveFiles() {
   const query = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)&pageSize=10`;
+  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=appDataFolder&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)&pageSize=100`;
   const response = await driveFetch(url);
   const data = await response.json();
   return data.files || [];
@@ -479,7 +480,7 @@ async function createDriveSnapshot(payload) {
   const metadata = {
     name: DRIVE_FILE_NAME,
     mimeType: "application/json",
-    appProperties: { salaryCalendar: "snapshot" }
+    parents: ["appDataFolder"]
   };
   const boundary = "salary_calendar_boundary";
   const body = [
@@ -510,19 +511,25 @@ async function createDriveFile() {
   return data.id;
 }
 
-async function trashDriveFile(fileId) {
-  if (!fileId) return;
-  await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,trashed`, {
+async function updateDriveFile(fileId, payload) {
+  const response = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,modifiedTime`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json; charset=UTF-8" },
-    body: JSON.stringify({ trashed: true })
+    body: JSON.stringify(payload, null, 2)
   });
+  const data = await response.json();
+  return { id: fileId, ...data };
+}
+
+async function deleteDriveFile(fileId) {
+  if (!fileId) return;
+  await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, { method: "DELETE" });
 }
 
 async function cleanupOldDriveSnapshots(keepId) {
   const files = await listDriveFiles();
   await Promise.allSettled(
-    files.filter((file) => file.id !== keepId).map((file) => trashDriveFile(file.id))
+    files.filter((file) => file.id !== keepId).map((file) => deleteDriveFile(file.id))
   );
 }
 
@@ -725,18 +732,18 @@ async function saveToDriveNow() {
   const fileId = await getDriveFileId();
   const remoteBeforeSave = await downloadDriveState(fileId);
   const uploadState = mergeStateForDriveSave(remoteBeforeSave, snapshot);
-  const data = await createDriveSnapshot(uploadState);
-  const verified = await verifyDriveUpload(data.id, uploadState);
+  const data = await updateDriveFile(fileId, uploadState);
+  const verified = await verifyDriveUpload(fileId, uploadState);
   state = mergeStateForDriveSave(verified, state);
   persistStateWithoutTouchingSyncTime();
   renderSettings();
   renderCalendar();
-  driveMeta.fileId = data.id;
+  driveMeta.fileId = fileId;
   driveMeta.lastSync = new Date().toISOString();
   driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
   driveMeta.lastRemoteUpdatedAt = verified.updatedAt || uploadState.updatedAt;
   saveDriveMeta();
-  await cleanupOldDriveSnapshots(data.id);
+  await cleanupOldDriveSnapshots(fileId);
   const summary = recordSummary(verified);
   lastDriveRefreshAt = Date.now();
   setDriveStatus(`Drive 저장 확인 완료. ${summary.latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
