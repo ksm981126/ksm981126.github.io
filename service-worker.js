@@ -1,9 +1,9 @@
-const CACHE_NAME = "salary-calendar-offline-v36";
+const CACHE_NAME = "salary-calendar-offline-v37";
 const FILES = [
   "./",
   "./index.html",
-  "./styles.css?v=pwa-sync-v31",
-  "./app.js?v=pwa-sync-v31",
+  "./styles.css?v=pwa-sync-v32",
+  "./app.js?v=pwa-sync-v32",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-192.png",

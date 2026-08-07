@@ -6,7 +6,7 @@ const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
-const APP_VERSION = "sync-v31";
+const APP_VERSION = "sync-v32";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -266,13 +266,39 @@ function normalizeState(raw) {
   return { updatedAt: fallbackUpdatedAt, settings, days, journals, syncMeta };
 }
 
+function normalizeClockTime(value) {
+  const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return "";
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return "";
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function journalTimeValues(entry = {}) {
+  let startTime = normalizeClockTime(entry.startTime);
+  let endTime = normalizeClockTime(entry.endTime);
+  const period = String(entry.period || "").trim();
+  const periodMatch = period.match(/^(\d{1,2}:\d{2})\s*[-~–—]\s*(\d{1,2}:\d{2})$/);
+  if (periodMatch) {
+    startTime ||= normalizeClockTime(periodMatch[1]);
+    endTime ||= normalizeClockTime(periodMatch[2]);
+  }
+  return { startTime, endTime, period };
+}
+
 function normalizeJournalEntries(entries) {
-  return (Array.isArray(entries) ? entries : []).map((entry) => ({
-    siteName: String(entry?.siteName || ""),
-    period: String(entry?.period || ""),
-    tasks: Array.isArray(entry?.tasks) ? entry.tasks.filter(Boolean) : [],
-    office: Boolean(entry?.office)
-  })).filter((entry) => entry.office || entry.siteName || entry.period || entry.tasks.length);
+  return (Array.isArray(entries) ? entries : []).map((entry) => {
+    const { startTime, endTime, period } = journalTimeValues(entry);
+    return {
+      siteName: String(entry?.siteName || ""),
+      startTime,
+      endTime,
+      period: startTime && endTime ? `${startTime}-${endTime}` : period,
+      tasks: Array.isArray(entry?.tasks) ? entry.tasks.filter(Boolean) : [],
+      office: Boolean(entry?.office)
+    };
+  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length);
 }
 
 function normalizeRecord(record, settings = defaultState().settings) {
@@ -1316,6 +1342,8 @@ function journalDayHtml(date, key, entries, holiday) {
 function journalEntryTemplate(entry = {}, index = 0) {
   const tasks = ["설치", "점검", "배터리 교체", "UPS 교체", "철거", "유급휴가"];
   const selected = new Set(entry.tasks || []);
+  const { startTime, endTime, period } = journalTimeValues(entry);
+  const legacyPeriod = startTime && endTime ? "" : period;
   return `
     <section class="journal-entry" data-index="${index}">
       <div class="entry-head">
@@ -1324,7 +1352,15 @@ function journalEntryTemplate(entry = {}, index = 0) {
       </div>
       <label class="check-row"><input type="checkbox" class="journal-office" ${entry.office ? "checked" : ""}>사무실</label>
       <label>현장명<input type="text" class="journal-site" value="${escapeHtml(entry.siteName)}" placeholder="현장명을 입력하세요"></label>
-      <label>작업기간<input type="text" class="journal-period" value="${escapeHtml(entry.period)}" placeholder="예: 09:00-11:30 또는 오전"></label>
+      <fieldset class="journal-time-field">
+        <legend>작업시간</legend>
+        <div class="journal-time-range">
+          <label>시작<input type="time" class="journal-start-time" value="${startTime}" step="300"></label>
+          <span aria-hidden="true">~</span>
+          <label>종료<input type="time" class="journal-end-time" value="${endTime}" step="300"></label>
+        </div>
+        <input type="hidden" class="journal-period-legacy" value="${escapeHtml(legacyPeriod)}">
+      </fieldset>
       <fieldset>
         <legend>맡은 업무</legend>
         <div class="task-checks">
@@ -1336,17 +1372,24 @@ function journalEntryTemplate(entry = {}, index = 0) {
 }
 
 function renderJournalForm(entries = []) {
-  const items = entries.length ? entries : [{ siteName: "", period: "", tasks: [], office: false }];
+  const items = entries.length ? entries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false }];
   els.journalEntries.innerHTML = items.map(journalEntryTemplate).join("");
 }
 
 function readJournalForm() {
-  return Array.from(els.journalEntries.querySelectorAll(".journal-entry")).map((entry) => ({
-    office: entry.querySelector(".journal-office").checked,
-    siteName: entry.querySelector(".journal-site").value.trim(),
-    period: entry.querySelector(".journal-period").value.trim(),
-    tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value)
-  })).filter((entry) => entry.office || entry.siteName || entry.period || entry.tasks.length);
+  return Array.from(els.journalEntries.querySelectorAll(".journal-entry")).map((entry) => {
+    const startTime = normalizeClockTime(entry.querySelector(".journal-start-time").value);
+    const endTime = normalizeClockTime(entry.querySelector(".journal-end-time").value);
+    const legacyPeriod = entry.querySelector(".journal-period-legacy").value.trim();
+    return {
+      office: entry.querySelector(".journal-office").checked,
+      siteName: entry.querySelector(".journal-site").value.trim(),
+      startTime,
+      endTime,
+      period: startTime && endTime ? `${startTime}-${endTime}` : legacyPeriod,
+      tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value)
+    };
+  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length);
 }
 
 function renderSummary() {
@@ -1562,7 +1605,7 @@ els.deleteDay.addEventListener("click", () => {
 
 els.addJournalEntry.addEventListener("click", () => {
   const current = readJournalForm();
-  current.push({ siteName: "", period: "", tasks: [], office: false });
+  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false });
   renderJournalForm(current);
 });
 
