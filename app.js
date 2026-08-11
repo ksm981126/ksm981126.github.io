@@ -7,7 +7,7 @@ const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
-const APP_VERSION = "sync-v34";
+const APP_VERSION = "sync-v35";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -379,7 +379,7 @@ function persistStateWithoutTouchingSyncTime() {
 function applyCurrentWageCorrection() {
   if (localStorage.getItem(WAGE_CORRECTION_KEY)) return;
   localStorage.setItem(WAGE_CORRECTION_KEY, "1");
-  if (Number(state.settings.hourlyWage) !== 10320) return;
+  if (Number(state.settings.hourlyWage) === 10350) return;
   state.settings.hourlyWage = 10350;
   markSettingsChanged();
   saveState();
