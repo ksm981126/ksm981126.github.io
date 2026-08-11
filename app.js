@@ -7,7 +7,7 @@ const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
-const APP_VERSION = "sync-v35";
+const APP_VERSION = "sync-v36";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -1400,7 +1400,7 @@ function journalLocationText(location) {
 function journalMapUrl(location) {
   const normalized = normalizeJournalLocation(location);
   if (!normalized) return "";
-  return `https://www.google.com/maps?q=${normalized.latitude},${normalized.longitude}`;
+  return `https://www.openstreetmap.org/?mlat=${normalized.latitude}&mlon=${normalized.longitude}#map=18/${normalized.latitude}/${normalized.longitude}`;
 }
 
 function journalLocationTemplate(location) {
@@ -1411,7 +1411,7 @@ function journalLocationTemplate(location) {
       <legend>위치 증빙</legend>
       <div class="journal-location-actions">
         <button type="button" class="ghost-btn capture-journal-location">현재 위치 저장</button>
-        <a class="ghost-btn journal-map-link" href="${mapUrl}" target="_blank" rel="noopener" ${normalized ? "" : "hidden"}>지도 확인</a>
+        <a class="ghost-btn journal-map-link" href="${mapUrl}" target="_blank" rel="noopener noreferrer" ${normalized ? "" : "hidden"}>웹 지도 확인</a>
         <button type="button" class="ghost-btn clear-journal-location" ${normalized ? "" : "hidden"}>위치 삭제</button>
       </div>
       <p class="journal-location-status" aria-live="polite">${escapeHtml(journalLocationText(normalized))}</p>
