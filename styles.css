@@ -435,6 +435,15 @@ legend {
   border-color: rgba(15, 118, 110, .24);
 }
 
+.money-item.earning {
+  background: #eef8f4;
+  border-color: #b8d7cc;
+}
+
+.money-item.earning strong {
+  color: #17624f;
+}
+
 .calendar-wrap {
   background: var(--panel);
   border: 1px solid var(--line);
