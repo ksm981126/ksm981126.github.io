@@ -581,6 +581,15 @@ legend {
   color: var(--muted);
 }
 
+.premium-badge {
+  gap: 4px;
+}
+
+.premium-badge strong {
+  color: inherit;
+  font-size: inherit;
+}
+
 .badge.pay { background: var(--amber-soft); border-color: #ead27d; color: #7a5600; }
 .badge.paid { background: var(--accent-soft); border-color: #b9ddd6; color: var(--accent); }
 .badge.vac { background: var(--violet-soft); border-color: #cbc1ff; color: var(--violet); }
@@ -1088,6 +1097,19 @@ dialog form {
     font-size: 9px;
     line-height: 1.25;
   }
+  .premium-badge {
+    display: grid;
+    justify-items: start;
+    gap: 0;
+    white-space: normal;
+  }
+  .premium-badge > span,
+  .premium-badge > strong {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .day-pay {
     max-width: 100%;
     overflow: hidden;
@@ -1162,6 +1184,7 @@ dialog form {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .badge.premium-badge { white-space: normal; }
   .badge.week { display: none; }
   .day-pay { display: none; }
 }

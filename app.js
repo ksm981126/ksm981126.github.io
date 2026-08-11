@@ -6,7 +6,7 @@ const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
-const APP_VERSION = "sync-v32";
+const APP_VERSION = "sync-v33";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -962,8 +962,10 @@ function baseWorkRecord(date) {
   };
 }
 
-function dayPay(record, key) {
-  if (!record?.worked) return 0;
+function workPayBreakdown(record, key) {
+  if (!record?.worked) {
+    return { total: 0, overtime: 0, night: 0, overtimePay: 0, nightExtra: 0 };
+  }
   const hours = workHours(record);
   const wage = Number(record.wage || 0);
   const over5 = state.settings.businessSize === "over5";
@@ -975,7 +977,17 @@ function dayPay(record, key) {
   const overtimeExtra = over5 ? overtime * wage * 0.5 : 0;
   const nightExtra = over5 ? night * wage * 0.5 : 0;
   const holidayExtra = over5 && holidayWork ? hours * wage * 0.5 : 0;
-  return Math.round(base + overtimeExtra + nightExtra + holidayExtra);
+  return {
+    total: Math.round(base + overtimeExtra + nightExtra + holidayExtra),
+    overtime,
+    night,
+    overtimePay: Math.round(overtime * wage + overtimeExtra),
+    nightExtra: Math.round(nightExtra)
+  };
+}
+
+function dayPay(record, key) {
+  return workPayBreakdown(record, key).total;
 }
 
 function monthKeys(year, month) {
@@ -1295,10 +1307,13 @@ function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOverti
   if (record?.type === "substituteHoliday") badges.push('<span class="badge substitute">대체</span>');
   if (weeklyOvertime !== null) badges.push(`<span class="badge week">주 연장 ${weeklyOvertime.toFixed(1)}h</span>`);
   if (record?.worked) {
-    const overtime = Math.max(0, workHours(record) - 8);
-    const night = nightHours(record);
-    if (overtime > 0) badges.push(`<span class="badge over">연장 ${overtime.toFixed(1)}h</span>`);
-    if (night > 0) badges.push(`<span class="badge night">야간 ${night.toFixed(1)}h</span>`);
+    const pay = workPayBreakdown(record, key);
+    if (pay.overtime > 0) {
+      badges.push(`<span class="badge over premium-badge"><span>연장 ${pay.overtime.toFixed(1)}h</span><strong>${fmtMoney.format(pay.overtimePay)}</strong></span>`);
+    }
+    if (pay.night > 0) {
+      badges.push(`<span class="badge night premium-badge"><span>야간가산 ${pay.night.toFixed(1)}h</span><strong>+${fmtMoney.format(pay.nightExtra)}</strong></span>`);
+    }
   }
   const body = record?.worked
     ? `<span class="stamp">출근</span><div class="mini-line">${record.start}-${record.end} · ${fmtMoney.format(record.wage)}/h</div>`
@@ -1450,9 +1465,8 @@ function updateDayCalcPreview() {
     type
   };
   const hours = workHours(previewRecord);
-  const overtime = Math.max(0, hours - 8);
-  const night = nightHours(previewRecord);
-  els.dayCalcPreview.textContent = `근로 ${hours.toFixed(1)}시간 · 연장 ${overtime.toFixed(1)}시간 · 야간 ${night.toFixed(1)}시간`;
+  const pay = workPayBreakdown(previewRecord, selectedDateKey || dateKey(today));
+  els.dayCalcPreview.textContent = `근로 ${hours.toFixed(1)}시간 · 연장 ${pay.overtime.toFixed(1)}시간 ${fmtMoney.format(pay.overtimePay)} · 야간가산 ${pay.night.toFixed(1)}시간 +${fmtMoney.format(pay.nightExtra)}`;
 }
 
 function handleDayClick(date) {
