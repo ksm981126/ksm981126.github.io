@@ -6,7 +6,8 @@ const DRIVE_FILE_NAME = "salary-calendar-data.json";
 const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
-const APP_VERSION = "sync-v33";
+const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
+const APP_VERSION = "sync-v34";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -201,7 +202,7 @@ function defaultState() {
     // A fresh device has no user change yet, so Drive data must take priority.
     updatedAt: "",
     settings: {
-      hourlyWage: 10030,
+      hourlyWage: 10350,
       defaultStart: "09:00",
       defaultEnd: "18:00",
       breakHours: 1,
@@ -296,9 +297,30 @@ function normalizeJournalEntries(entries) {
       endTime,
       period: startTime && endTime ? `${startTime}-${endTime}` : period,
       tasks: Array.isArray(entry?.tasks) ? entry.tasks.filter(Boolean) : [],
-      office: Boolean(entry?.office)
+      office: Boolean(entry?.office),
+      location: normalizeJournalLocation(entry?.location)
     };
-  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length);
+  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location);
+}
+
+function normalizeJournalLocation(location) {
+  if (location?.latitude === "" || location?.latitude === null || location?.latitude === undefined
+    || location?.longitude === "" || location?.longitude === null || location?.longitude === undefined) return null;
+  const latitude = Number(location?.latitude);
+  const longitude = Number(location?.longitude);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return null;
+  }
+  const accuracy = location?.accuracy === "" || location?.accuracy === null || location?.accuracy === undefined
+    ? Number.NaN
+    : Number(location.accuracy);
+  const capturedAt = String(location?.capturedAt || "");
+  return {
+    latitude: Number(latitude.toFixed(7)),
+    longitude: Number(longitude.toFixed(7)),
+    accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? Math.round(accuracy) : null,
+    capturedAt: capturedAt && !Number.isNaN(Date.parse(capturedAt)) ? new Date(capturedAt).toISOString() : ""
+  };
 }
 
 function normalizeRecord(record, settings = defaultState().settings) {
@@ -352,6 +374,15 @@ function markJournalChanged(key, deleted = false) {
 
 function persistStateWithoutTouchingSyncTime() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function applyCurrentWageCorrection() {
+  if (localStorage.getItem(WAGE_CORRECTION_KEY)) return;
+  localStorage.setItem(WAGE_CORRECTION_KEY, "1");
+  if (Number(state.settings.hourlyWage) !== 10320) return;
+  state.settings.hourlyWage = 10350;
+  markSettingsChanged();
+  saveState();
 }
 
 function loadDriveMeta() {
@@ -1342,15 +1373,53 @@ function escapeHtml(value) {
 function journalDayHtml(date, key, entries, holiday) {
   const office = entries.some((entry) => entry.office);
   const siteCount = entries.filter((entry) => !entry.office).length;
+  const locationCount = entries.filter((entry) => entry.location).length;
   const taskNames = [...new Set(entries.flatMap((entry) => entry.tasks || []))].slice(0, 3);
   const body = entries.length
     ? `<span class="journal-stamp">${office && !siteCount ? "사무실" : `현장 ${siteCount || entries.length}곳`}</span>
+       ${locationCount ? `<span class="journal-location-mark">위치 ${locationCount}</span>` : ""}
        <div class="mini-line">${taskNames.map(escapeHtml).join(" · ") || "업무일지 작성됨"}</div>`
     : "";
   return `
     <div class="date-row"><span class="date">${date.getDate()}</span><span class="holiday-name">${holiday?.name || ""}</span></div>
     <div class="day-body">${body}</div>
     <div class="day-pay">${entries.length ? `${entries.length}건` : ""}</div>
+  `;
+}
+
+function journalLocationText(location) {
+  const normalized = normalizeJournalLocation(location);
+  if (!normalized) return "저장된 위치 없음";
+  const captured = normalized.capturedAt
+    ? new Date(normalized.capturedAt).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "medium" })
+    : "기록 시각 없음";
+  const accuracy = normalized.accuracy !== null ? ` · 정확도 약 ${normalized.accuracy}m` : "";
+  return `${normalized.latitude.toFixed(6)}, ${normalized.longitude.toFixed(6)}${accuracy} · ${captured}`;
+}
+
+function journalMapUrl(location) {
+  const normalized = normalizeJournalLocation(location);
+  if (!normalized) return "";
+  return `https://www.google.com/maps?q=${normalized.latitude},${normalized.longitude}`;
+}
+
+function journalLocationTemplate(location) {
+  const normalized = normalizeJournalLocation(location);
+  const mapUrl = journalMapUrl(normalized);
+  return `
+    <fieldset class="journal-location-field">
+      <legend>위치 증빙</legend>
+      <div class="journal-location-actions">
+        <button type="button" class="ghost-btn capture-journal-location">현재 위치 저장</button>
+        <a class="ghost-btn journal-map-link" href="${mapUrl}" target="_blank" rel="noopener" ${normalized ? "" : "hidden"}>지도 확인</a>
+        <button type="button" class="ghost-btn clear-journal-location" ${normalized ? "" : "hidden"}>위치 삭제</button>
+      </div>
+      <p class="journal-location-status" aria-live="polite">${escapeHtml(journalLocationText(normalized))}</p>
+      <input type="hidden" class="journal-latitude" value="${normalized?.latitude ?? ""}">
+      <input type="hidden" class="journal-longitude" value="${normalized?.longitude ?? ""}">
+      <input type="hidden" class="journal-accuracy" value="${normalized?.accuracy ?? ""}">
+      <input type="hidden" class="journal-captured-at" value="${normalized?.capturedAt ?? ""}">
+    </fieldset>
   `;
 }
 
@@ -1382,13 +1451,23 @@ function journalEntryTemplate(entry = {}, index = 0) {
           ${tasks.map((task) => `<label class="check-row"><input type="checkbox" class="journal-task" value="${task}" ${selected.has(task) ? "checked" : ""}>${task}</label>`).join("")}
         </div>
       </fieldset>
+      ${journalLocationTemplate(entry.location)}
     </section>
   `;
 }
 
 function renderJournalForm(entries = []) {
-  const items = entries.length ? entries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false }];
+  const items = entries.length ? entries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null }];
   els.journalEntries.innerHTML = items.map(journalEntryTemplate).join("");
+}
+
+function readJournalLocation(entry) {
+  return normalizeJournalLocation({
+    latitude: entry.querySelector(".journal-latitude").value,
+    longitude: entry.querySelector(".journal-longitude").value,
+    accuracy: entry.querySelector(".journal-accuracy").value,
+    capturedAt: entry.querySelector(".journal-captured-at").value
+  });
 }
 
 function readJournalForm() {
@@ -1402,9 +1481,76 @@ function readJournalForm() {
       startTime,
       endTime,
       period: startTime && endTime ? `${startTime}-${endTime}` : legacyPeriod,
-      tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value)
+      tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value),
+      location: readJournalLocation(entry)
     };
-  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length);
+  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location);
+}
+
+function setJournalLocationUi(entry, location, statusText = "") {
+  const normalized = normalizeJournalLocation(location);
+  entry.querySelector(".journal-latitude").value = normalized?.latitude ?? "";
+  entry.querySelector(".journal-longitude").value = normalized?.longitude ?? "";
+  entry.querySelector(".journal-accuracy").value = normalized?.accuracy ?? "";
+  entry.querySelector(".journal-captured-at").value = normalized?.capturedAt ?? "";
+  const mapLink = entry.querySelector(".journal-map-link");
+  mapLink.href = journalMapUrl(normalized);
+  mapLink.hidden = !normalized;
+  entry.querySelector(".clear-journal-location").hidden = !normalized;
+  entry.querySelector(".journal-location-status").textContent = statusText || journalLocationText(normalized);
+}
+
+function persistOpenJournalForm() {
+  const entries = readJournalForm();
+  if (entries.length) {
+    state.journals[selectedDateKey] = entries;
+    markJournalChanged(selectedDateKey);
+  } else {
+    delete state.journals[selectedDateKey];
+    markJournalChanged(selectedDateKey, true);
+  }
+  saveState();
+  renderCalendar();
+}
+
+function journalLocationError(error) {
+  if (error?.code === 1) return "위치 권한이 거부됐습니다. 브라우저 설정에서 위치 권한을 허용해주세요.";
+  if (error?.code === 2) return "현재 위치를 확인할 수 없습니다. GPS와 네트워크 상태를 확인해주세요.";
+  if (error?.code === 3) return "위치 확인 시간이 초과됐습니다. 잠시 후 다시 시도해주세요.";
+  return "위치 저장에 실패했습니다.";
+}
+
+async function captureJournalLocation(entry, button) {
+  const status = entry.querySelector(".journal-location-status");
+  if (!navigator.geolocation) {
+    status.textContent = "이 브라우저에서는 위치 기능을 사용할 수 없습니다.";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "위치 확인 중";
+  status.textContent = "휴대폰의 현재 위치를 확인하고 있습니다.";
+  try {
+    const position = await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+      });
+    });
+    const location = normalizeJournalLocation({
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+      accuracy: position.coords.accuracy,
+      capturedAt: new Date(position.timestamp || Date.now()).toISOString()
+    });
+    setJournalLocationUi(entry, location, `위치 저장 완료 · ${journalLocationText(location)}`);
+    persistOpenJournalForm();
+  } catch (error) {
+    status.textContent = journalLocationError(error);
+  } finally {
+    button.disabled = false;
+    button.textContent = "현재 위치 저장";
+  }
 }
 
 function renderSummary() {
@@ -1619,31 +1765,33 @@ els.deleteDay.addEventListener("click", () => {
 
 els.addJournalEntry.addEventListener("click", () => {
   const current = readJournalForm();
-  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false });
+  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null });
   renderJournalForm(current);
 });
 
-els.journalEntries.addEventListener("click", (event) => {
-  if (!event.target.classList.contains("remove-journal-entry")) return;
-  const current = readJournalForm();
+els.journalEntries.addEventListener("click", async (event) => {
+  const action = event.target.closest("button");
+  if (!action) return;
   const entry = event.target.closest(".journal-entry");
+  if (action.classList.contains("capture-journal-location")) {
+    await captureJournalLocation(entry, action);
+    return;
+  }
+  if (action.classList.contains("clear-journal-location")) {
+    setJournalLocationUi(entry, null);
+    persistOpenJournalForm();
+    return;
+  }
+  if (!action.classList.contains("remove-journal-entry")) return;
+  const current = readJournalForm();
   current.splice(Number(entry.dataset.index), 1);
   renderJournalForm(current);
 });
 
 els.journalForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const entries = readJournalForm();
-  if (entries.length) {
-    state.journals[selectedDateKey] = entries;
-    markJournalChanged(selectedDateKey);
-  } else {
-    delete state.journals[selectedDateKey];
-    markJournalChanged(selectedDateKey, true);
-  }
-  saveState();
+  persistOpenJournalForm();
   els.journalDialog.close();
-  renderCalendar();
 });
 
 els.deleteJournal.addEventListener("click", () => {
@@ -1931,6 +2079,7 @@ if ("serviceWorker" in navigator) {
     .catch(() => {});
 }
 
+applyCurrentWageCorrection();
 persistStateWithoutTouchingSyncTime();
 if (els.appVersion) els.appVersion.textContent = `앱 버전 ${APP_VERSION}`;
 updateDriveControls();

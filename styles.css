@@ -557,6 +557,17 @@ legend {
   background: var(--indigo-soft);
 }
 
+.journal-location-mark {
+  justify-self: start;
+  border: 1px solid #b8d7cc;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: #eef8f4;
+  color: #17624f;
+  font-size: 10px;
+  font-weight: 900;
+}
+
 .mini-line {
   font-size: 11px;
   color: var(--muted);
@@ -654,6 +665,38 @@ legend {
 .journal-time-range input[type="time"] {
   min-width: 0;
   min-height: 44px;
+}
+
+.journal-location-field {
+  padding: 12px;
+}
+
+.journal-location-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.journal-location-actions .ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding-inline: 11px;
+  text-decoration: none;
+}
+
+.journal-location-actions [hidden] {
+  display: none;
+}
+
+.journal-location-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .task-checks {
@@ -1134,6 +1177,9 @@ dialog form {
   .task-checks { grid-template-columns: 1fr; }
   .journal-time-range { gap: 6px; }
   .journal-time-field { padding: 10px; }
+  .journal-location-field { padding: 10px; }
+  .journal-location-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .journal-location-actions .capture-journal-location { grid-column: 1 / -1; }
   .lock-card { padding: 22px; }
   .icon-btn {
     width: 38px;
