@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=pwa-sync-v37">
+  <link rel="stylesheet" href="styles.css?v=pwa-sync-v38">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -41,6 +41,7 @@
           <legend>세후 예상</legend>
           <label class="check-row"><input type="checkbox" id="useDeductions">4대보험/소득세/지방소득세 예상 공제</label>
           <label>비과세 월 금액<input type="number" id="taxFreeMonthly" min="0" step="1000" inputmode="numeric"></label>
+          <label>국민연금·건강보험 기준 보수월액<input type="number" id="insuranceMonthlyBase" min="0" step="1000" inputmode="numeric"></label>
           <label>본인 포함 부양가족 수<input type="number" id="dependents" min="1" max="11" step="1" inputmode="numeric"></label>
         </fieldset>
         <button type="submit" class="primary-btn">설정 저장</button>
@@ -144,6 +145,7 @@
   </dialog>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="app.js?v=pwa-sync-v37"></script>
+  <script src="tax-table-2026.js?v=pwa-sync-v38"></script>
+  <script src="app.js?v=pwa-sync-v38"></script>
 </body>
 </html>

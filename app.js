@@ -7,7 +7,8 @@ const DRIVE_META_KEY = "salary-calendar-drive-meta";
 const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
-const APP_VERSION = "sync-v37";
+const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
+const APP_VERSION = "sync-v38";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -43,6 +44,7 @@ const els = {
   weeklyAllowance: document.querySelector("#weeklyAllowance"),
   useDeductions: document.querySelector("#useDeductions"),
   taxFreeMonthly: document.querySelector("#taxFreeMonthly"),
+  insuranceMonthlyBase: document.querySelector("#insuranceMonthlyBase"),
   dependents: document.querySelector("#dependents"),
   monthLabel: document.querySelector("#monthLabel"),
   calendar: document.querySelector("#calendar"),
@@ -213,7 +215,8 @@ function defaultState() {
       businessSize: "over5",
       weeklyAllowance: "auto",
       useDeductions: true,
-      taxFreeMonthly: 200000,
+      taxFreeMonthly: 0,
+      insuranceMonthlyBase: 2163000,
       dependents: 1,
       passwordHash: "",
       passwordSalt: ""
@@ -383,6 +386,24 @@ function applyCurrentWageCorrection() {
   state.settings.hourlyWage = 10350;
   markSettingsChanged();
   saveState();
+}
+
+function apply2026DeductionSettings() {
+  if (localStorage.getItem(DEDUCTION_2026_MIGRATION_KEY)) return;
+  localStorage.setItem(DEDUCTION_2026_MIGRATION_KEY, "1");
+  let changed = false;
+  if (Number(state.settings.taxFreeMonthly) === 200000) {
+    state.settings.taxFreeMonthly = 0;
+    changed = true;
+  }
+  if (!Number(state.settings.insuranceMonthlyBase)) {
+    state.settings.insuranceMonthlyBase = 2163000;
+    changed = true;
+  }
+  if (changed) {
+    markSettingsChanged();
+    saveState();
+  }
 }
 
 function loadDriveMeta() {
@@ -993,14 +1014,27 @@ function baseWorkRecord(date) {
   };
 }
 
+function weeklyOvertimeOnDay(key, record) {
+  if (!record?.worked) return 0;
+  const targetWeek = weekKey(dateFromKey(key));
+  const priorStatutoryHours = Object.entries(state.days).reduce((sum, [dayKey, dayRecord]) => {
+    if (dayKey >= key || !dayRecord?.worked || weekKey(dateFromKey(dayKey)) !== targetWeek) return sum;
+    return sum + Math.min(8, workHours(dayRecord));
+  }, 0);
+  const statutoryHours = Math.min(8, workHours(record));
+  return Math.max(0, priorStatutoryHours + statutoryHours - 40) - Math.max(0, priorStatutoryHours - 40);
+}
+
 function workPayBreakdown(record, key) {
   if (!record?.worked) {
-    return { total: 0, overtime: 0, night: 0, overtimePay: 0, nightExtra: 0 };
+    return { total: 0, hours: 0, regularHours: 0, basicPay: 0, overtime: 0, night: 0, overtimePay: 0, nightExtra: 0 };
   }
   const hours = workHours(record);
   const wage = Number(record.wage || 0);
   const over5 = state.settings.businessSize === "over5";
-  const overtime = Math.max(0, hours - 8);
+  const dailyOvertime = Math.max(0, hours - 8);
+  const overtime = dailyOvertime + weeklyOvertimeOnDay(key, record);
+  const regularHours = Math.max(0, hours - overtime);
   const night = nightHours(record);
   const date = dateFromKey(key);
   const holidayWork = record.type === "holiday" || isHoliday(date) || date.getDay() === 0;
@@ -1010,6 +1044,9 @@ function workPayBreakdown(record, key) {
   const holidayExtra = over5 && holidayWork ? hours * wage * 0.5 : 0;
   return {
     total: Math.round(base + overtimeExtra + nightExtra + holidayExtra),
+    hours,
+    regularHours,
+    basicPay: Math.round(regularHours * wage),
     overtime,
     night,
     overtimePay: Math.round(overtime * wage + overtimeExtra),
@@ -1088,12 +1125,15 @@ function payrollForWorkMonth(year, month) {
   const workPay = records.reduce((sum, [key, record]) => sum + dayPay(record, key), 0);
   const premiumTotals = records.reduce((totals, [key, record]) => {
     const pay = workPayBreakdown(record, key);
+    totals.totalHours += pay.hours;
+    totals.regularHours += pay.regularHours;
+    totals.basicPay += pay.basicPay;
     totals.overtimeHours += pay.overtime;
     totals.nightHours += pay.night;
     totals.overtimePay += pay.overtimePay;
     totals.nightExtra += pay.nightExtra;
     return totals;
-  }, { overtimeHours: 0, nightHours: 0, overtimePay: 0, nightExtra: 0 });
+  }, { totalHours: 0, regularHours: 0, basicPay: 0, overtimeHours: 0, nightHours: 0, overtimePay: 0, nightExtra: 0 });
   const weekly = weeklyAllowanceForMonth(year, month);
   const paidHoliday = Math.round(paidHolidayAllowanceForMonth(year, month));
   const vacation = Math.round(vacationPayForMonth(year, month));
@@ -1128,24 +1168,42 @@ function progressiveIncomeTax(taxBase) {
   return base * 0.45 - 65940000;
 }
 
+function withholdingIncomeTax(taxableMonthly, dependents) {
+  const familyCount = Math.min(11, Math.max(1, Math.floor(Number(dependents || 1))));
+  const table = globalThis.WITHHOLDING_TAX_TABLE_2026 || [];
+  const row = table.find(([minimum, maximum]) => taxableMonthly >= minimum && taxableMonthly < maximum);
+  if (row) return Number(row[2][familyCount - 1] || 0);
+  if (taxableMonthly < 770000) return 0;
+
+  const annualTaxablePay = taxableMonthly * 12;
+  const personalDeduction = familyCount * 1500000;
+  const taxBase = annualTaxablePay - earnedIncomeDeduction(annualTaxablePay) - personalDeduction;
+  const annualIncomeTaxBeforeCredit = progressiveIncomeTax(taxBase);
+  const earnedIncomeTaxCredit = Math.min(740000, annualIncomeTaxBeforeCredit * 0.55);
+  return Math.floor(Math.max(0, annualIncomeTaxBeforeCredit - earnedIncomeTaxCredit) / 120) * 10;
+}
+
+function floorToTen(value) {
+  return Math.floor(Math.max(0, value) / 10) * 10;
+}
+
+function roundToTen(value) {
+  return Math.round(Math.max(0, value) / 10) * 10;
+}
+
 function estimateDeductions(grossMonthly) {
   if (!state.settings.useDeductions || grossMonthly <= 0) {
     return { pension: 0, health: 0, care: 0, employment: 0, incomeTax: 0, localTax: 0, total: 0 };
   }
   const taxableMonthly = Math.max(0, grossMonthly - Number(state.settings.taxFreeMonthly || 0));
-  const pensionBase = Math.min(6370000, Math.max(400000, taxableMonthly));
-  const pension = Math.round(pensionBase * 0.045);
-  const health = Math.round(taxableMonthly * 0.03545);
-  const care = Math.round(health * 0.1295);
-  const employment = Math.round(taxableMonthly * 0.009);
-  const annualTaxablePay = taxableMonthly * 12;
-  const annualSocial = (pension + health + care + employment) * 12;
-  const personalDeduction = Math.max(1, Number(state.settings.dependents || 1)) * 1500000;
-  const taxBase = annualTaxablePay - earnedIncomeDeduction(annualTaxablePay) - annualSocial - personalDeduction;
-  const annualIncomeTaxBeforeCredit = progressiveIncomeTax(taxBase);
-  const earnedIncomeTaxCredit = Math.min(740000, annualIncomeTaxBeforeCredit * 0.55);
-  const incomeTax = Math.round(Math.max(0, annualIncomeTaxBeforeCredit - earnedIncomeTaxCredit) / 12);
-  const localTax = Math.round(incomeTax * 0.1);
+  const reportedMonthlyBase = Number(state.settings.insuranceMonthlyBase || taxableMonthly);
+  const pensionBase = Math.min(6590000, Math.max(410000, Math.floor(reportedMonthlyBase / 1000) * 1000));
+  const pension = floorToTen(pensionBase * 0.0475);
+  const health = roundToTen(reportedMonthlyBase * 0.03595);
+  const care = floorToTen(health * 0.1314);
+  const employment = floorToTen(taxableMonthly * 0.009);
+  const incomeTax = withholdingIncomeTax(taxableMonthly, state.settings.dependents);
+  const localTax = floorToTen(incomeTax * 0.1);
   const total = pension + health + care + employment + incomeTax + localTax;
   return { pension, health, care, employment, incomeTax, localTax, total };
 }
@@ -1301,6 +1359,7 @@ function renderSettings() {
   els.weeklyAllowance.value = state.settings.weeklyAllowance;
   els.useDeductions.checked = state.settings.useDeductions;
   els.taxFreeMonthly.value = state.settings.taxFreeMonthly;
+  els.insuranceMonthlyBase.value = state.settings.insuranceMonthlyBase;
   els.dependents.value = state.settings.dependents;
 }
 
@@ -1579,6 +1638,9 @@ function renderSummary() {
       <span>공제 예상 <strong>${fmtMoney.format(pay.deductions.total)}</strong></span>
     </div>
     <div class="money-grid compact">
+      ${summaryItem("총 근무시간", `${pay.totalHours.toFixed(1)}시간`, "earning")}
+      ${summaryItem("기본근로시간", `${pay.regularHours.toFixed(1)}시간`, "earning")}
+      ${moneyItem("기본급", pay.basicPay, "earning")}
       ${moneyItem("국민연금", pay.deductions.pension)}
       ${moneyItem("건강보험", pay.deductions.health)}
       ${moneyItem("장기요양", pay.deductions.care)}
@@ -1596,7 +1658,11 @@ function renderSummary() {
 }
 
 function moneyItem(label, value, tone = "") {
-  return `<div class="money-item ${tone}"><span>${label}</span><strong>${fmtMoney.format(value)}</strong></div>`;
+  return summaryItem(label, fmtMoney.format(value), tone);
+}
+
+function summaryItem(label, value, tone = "") {
+  return `<div class="money-item ${tone}"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
 function shortMoney(value) {
@@ -1684,6 +1750,7 @@ els.form.addEventListener("submit", (event) => {
     weeklyAllowance: els.weeklyAllowance.value,
     useDeductions: els.useDeductions.checked,
     taxFreeMonthly: Number(els.taxFreeMonthly.value || 0),
+    insuranceMonthlyBase: Number(els.insuranceMonthlyBase.value || 0),
     dependents: Number(els.dependents.value || 1)
   };
   markSettingsChanged();
@@ -1929,6 +1996,8 @@ function renderSalaryQuery(showAll) {
       ${moneyItem("세후", pay.net, "primary")}
     </div>
     <div class="money-grid compact">
+      ${summaryItem("총 근무시간", `${pay.totalHours.toFixed(1)}시간`)}
+      ${moneyItem("기본급", pay.basicPay)}
       ${moneyItem("근무", pay.workPay)}
       ${moneyItem("주휴", pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
@@ -2091,6 +2160,7 @@ if ("serviceWorker" in navigator) {
 }
 
 applyCurrentWageCorrection();
+apply2026DeductionSettings();
 persistStateWithoutTouchingSyncTime();
 if (els.appVersion) els.appVersion.textContent = `앱 버전 ${APP_VERSION}`;
 updateDriveControls();
