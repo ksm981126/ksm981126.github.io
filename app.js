@@ -8,7 +8,7 @@ const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v39";
+const APP_VERSION = "sync-v40";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -1075,7 +1075,9 @@ function monthVacationRecords(year, month) {
 }
 
 function monthSubstituteHolidayRecords(year, month) {
-  return monthKeys(year, month).map((key) => [key, state.days[key]]).filter(([, record]) => record?.type === "substituteHoliday");
+  return monthKeys(year, month)
+    .map((key) => [key, state.days[key]])
+    .filter(([key, record]) => record?.type === "substituteHoliday" && !isPaidAttendanceHoliday(dateFromKey(key)));
 }
 
 function weekKey(date) {
@@ -1129,7 +1131,6 @@ function paidHolidayAllowanceForMonth(year, month) {
   return monthKeys(year, month).reduce((sum, key) => {
     const date = dateFromKey(key);
     if (!isPaidAttendanceHoliday(date) || !isEmployedOn(date)) return sum;
-    if (state.days[key]?.type === "substituteHoliday") return sum;
     return sum + paidDayHours() * Number(state.settings.hourlyWage || 0);
   }, 0);
 }
@@ -1442,7 +1443,7 @@ function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOverti
   if (paidHoliday && holiday?.substitute) badges.push('<span class="badge substitute">대체공휴일</span>');
   else if (paidHoliday) badges.push('<span class="badge paid">유급휴일</span>');
   if (record?.type === "vacation") badges.push('<span class="badge vac">휴가</span>');
-  if (record?.type === "substituteHoliday") badges.push('<span class="badge substitute">대체</span>');
+  if (record?.type === "substituteHoliday" && !paidHoliday) badges.push('<span class="badge substitute">대체</span>');
   if (weeklyOvertime !== null) badges.push(`<span class="badge week">주 연장 ${weeklyOvertime.toFixed(1)}h</span>`);
   if (record?.worked) {
     const pay = workPayBreakdown(record, key);
@@ -1458,7 +1459,7 @@ function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOverti
     : record?.type === "vacation"
       ? `<div class="mini-line">유급휴가 · ${fmtMoney.format(record.wage || state.settings.hourlyWage)}/h</div>`
       : record?.type === "substituteHoliday"
-        ? `<div class="mini-line">대체공휴일 · 8h · ${fmtMoney.format(record.wage || state.settings.hourlyWage)}/h</div>`
+        ? `<div class="mini-line">${paidHoliday ? "" : "대체공휴일 · "}8h · ${fmtMoney.format(record.wage || state.settings.hourlyWage)}/h</div>`
       : "";
   return `
     <div class="date-row"><span class="date">${date.getDate()}</span><span class="holiday-name">${holiday?.name || ""}</span></div>
