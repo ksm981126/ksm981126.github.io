@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=pwa-sync-v38">
+  <link rel="stylesheet" href="styles.css?v=pwa-sync-v39">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -36,7 +36,7 @@
           <label>입사일<input type="date" id="hireDate"></label>
         </div>
         <label>사업장 규모<select id="businessSize"><option value="under5">5인 미만</option><option value="over5">5인 이상</option></select></label>
-        <label>주휴수당 기준<select id="weeklyAllowance"><option value="auto">주 15시간 이상이면 자동 계산</option><option value="off">계산하지 않음</option></select></label>
+        <label>주휴수당 기준<select id="weeklyAllowance"><option value="auto">주 15시간 이상·개근 시 자동 계산</option><option value="off">계산하지 않음</option></select></label>
         <fieldset>
           <legend>세후 예상</legend>
           <label class="check-row"><input type="checkbox" id="useDeductions">4대보험/소득세/지방소득세 예상 공제</label>
@@ -145,7 +145,7 @@
   </dialog>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="tax-table-2026.js?v=pwa-sync-v38"></script>
-  <script src="app.js?v=pwa-sync-v38"></script>
+  <script src="tax-table-2026.js?v=pwa-sync-v39"></script>
+  <script src="app.js?v=pwa-sync-v39"></script>
 </body>
 </html>

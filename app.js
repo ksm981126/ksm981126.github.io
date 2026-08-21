@@ -8,7 +8,7 @@ const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v38";
+const APP_VERSION = "sync-v39";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -899,6 +899,7 @@ function rawHolidayEntries(year) {
   const fixed = [
     ["01-01", "신정", "none"],
     ["03-01", "삼일절", "weekend"],
+    ["05-01", "노동절", year >= 2026 ? "weekend" : "none"],
     ["05-05", "어린이날", "weekend"],
     ["06-06", "현충일", "none"],
     ["08-15", "광복절", "weekend"],
@@ -906,6 +907,7 @@ function rawHolidayEntries(year) {
     ["10-09", "한글날", "weekend"],
     ["12-25", "성탄절", "weekend"]
   ];
+  if (year >= 2026) fixed.push(["07-17", "제헌절", "weekend"]);
   const lunar = {
     2026: [["02-16", "설날"], ["02-17", "설날"], ["02-18", "설날"], ["05-24", "부처님오신날"], ["09-24", "추석"], ["09-25", "추석"], ["09-26", "추석"]],
     2027: [["02-06", "설날"], ["02-07", "설날"], ["02-08", "설날"], ["05-13", "부처님오신날"], ["09-14", "추석"], ["09-15", "추석"], ["09-16", "추석"]],
@@ -974,7 +976,8 @@ function isNonBusinessDay(date) {
 }
 
 function isPaidHoliday(date) {
-  return state.settings.businessSize === "over5" && date.getDay() >= 1 && date.getDay() <= 5 && isHoliday(date);
+  const isLaborDay = date.getMonth() === 4 && date.getDate() === 1;
+  return date.getDay() >= 1 && date.getDay() <= 5 && isHoliday(date) && (isLaborDay || state.settings.businessSize === "over5");
 }
 
 function isAutomaticSubstituteHoliday(date) {
@@ -1082,25 +1085,44 @@ function weekKey(date) {
 }
 
 function weeklyAllowanceForMonth(year, month) {
-  if (state.settings.weeklyAllowance !== "auto") return 0;
-  const weeks = new Map();
-  monthRecords(year, month).forEach(([key, record]) => {
-    const date = dateFromKey(key);
-    const bucket = weekKey(date);
-    const item = weeks.get(bucket) || { hours: 0, wageHours: 0 };
-    const hours = workHours(record);
-    item.hours += hours;
-    item.wageHours += hours * Number(record.wage || 0);
-    weeks.set(bucket, item);
-  });
-  let total = 0;
-  weeks.forEach((item) => {
-    if (item.hours >= 15) {
-      const avgWage = item.hours ? item.wageHours / item.hours : Number(state.settings.hourlyWage);
-      total += Math.min(8, item.hours / 5) * avgWage;
+  if (state.settings.weeklyAllowance !== "auto") return { hours: 0, pay: 0 };
+  let hours = 0;
+  let pay = 0;
+
+  monthKeys(year, month).forEach((sundayKey) => {
+    const sunday = dateFromKey(sundayKey);
+    if (sunday.getDay() !== 0 || sunday > today || !isEmployedOn(sunday)) return;
+
+    const monday = addDays(sunday, -6);
+    if (!isEmployedOn(monday)) return;
+
+    let attendedAll = true;
+    let wageHours = 0;
+    let workedHours = 0;
+    for (let offset = 0; offset < 5; offset += 1) {
+      const date = addDays(monday, offset);
+      const key = dateKey(date);
+      const record = state.days[key];
+      if (!isPaidAttendanceHoliday(date) && !isAttendanceCredit(key, record)) {
+        attendedAll = false;
+        break;
+      }
+      if (record?.worked) {
+        const statutoryHours = Math.min(paidDayHours(), workHours(record));
+        wageHours += statutoryHours * Number(record.wage || state.settings.hourlyWage || 0);
+        workedHours += statutoryHours;
+      }
     }
+
+    const contractedWeeklyHours = paidDayHours() * 5;
+    if (!attendedAll || contractedWeeklyHours < 15) return;
+    const allowanceHours = Math.min(8, contractedWeeklyHours / 5);
+    const wage = workedHours ? wageHours / workedHours : Number(state.settings.hourlyWage || 0);
+    hours += allowanceHours;
+    pay += allowanceHours * wage;
   });
-  return Math.round(total);
+
+  return { hours, pay: Math.round(pay) };
 }
 
 function paidHolidayAllowanceForMonth(year, month) {
@@ -1122,7 +1144,7 @@ function substituteHolidayPayForMonth(year, month) {
 
 function payrollForWorkMonth(year, month) {
   const records = monthRecords(year, month);
-  const workPay = records.reduce((sum, [key, record]) => sum + dayPay(record, key), 0);
+  const rawWorkPay = records.reduce((sum, [key, record]) => sum + dayPay(record, key), 0);
   const premiumTotals = records.reduce((totals, [key, record]) => {
     const pay = workPayBreakdown(record, key);
     totals.totalHours += pay.hours;
@@ -1134,13 +1156,30 @@ function payrollForWorkMonth(year, month) {
     totals.nightExtra += pay.nightExtra;
     return totals;
   }, { totalHours: 0, regularHours: 0, basicPay: 0, overtimeHours: 0, nightHours: 0, overtimePay: 0, nightExtra: 0 });
-  const weekly = weeklyAllowanceForMonth(year, month);
+  const roundedOvertimePay = roundToTen(premiumTotals.overtimePay);
+  const workPay = rawWorkPay + roundedOvertimePay - premiumTotals.overtimePay;
+  premiumTotals.overtimePay = roundedOvertimePay;
+  const weeklyAllowance = weeklyAllowanceForMonth(year, month);
+  const weekly = weeklyAllowance.pay;
   const paidHoliday = Math.round(paidHolidayAllowanceForMonth(year, month));
   const vacation = Math.round(vacationPayForMonth(year, month));
   const substituteHoliday = Math.round(substituteHolidayPayForMonth(year, month));
   const gross = Math.round(workPay + weekly + paidHoliday + vacation + substituteHoliday);
   const deductions = estimateDeductions(gross);
-  return { workPay, ...premiumTotals, weekly, paidHoliday, vacation, substituteHoliday, gross, deductions, net: Math.max(0, gross - deductions.total) };
+  const baseLikePay = premiumTotals.basicPay + weekly + paidHoliday + vacation + substituteHoliday;
+  return {
+    workPay,
+    ...premiumTotals,
+    weekly,
+    weeklyHours: weeklyAllowance.hours,
+    paidHoliday,
+    vacation,
+    substituteHoliday,
+    baseLikePay,
+    gross,
+    deductions,
+    net: Math.max(0, gross - deductions.total)
+  };
 }
 
 function payrollReceivedIn(year, month) {
@@ -1640,7 +1679,8 @@ function renderSummary() {
     <div class="money-grid compact">
       ${summaryItem("총 근무시간", `${pay.totalHours.toFixed(1)}시간`, "earning")}
       ${summaryItem("기본근로시간", `${pay.regularHours.toFixed(1)}시간`, "earning")}
-      ${moneyItem("기본급", pay.basicPay, "earning")}
+      ${moneyItem("실근로 기본급", pay.basicPay, "earning")}
+      ${moneyItem("기본급성 합계", pay.baseLikePay, "earning")}
       ${moneyItem("국민연금", pay.deductions.pension)}
       ${moneyItem("건강보험", pay.deductions.health)}
       ${moneyItem("장기요양", pay.deductions.care)}
@@ -1649,7 +1689,7 @@ function renderSummary() {
       ${moneyItem("지방소득세", pay.deductions.localTax)}
       ${moneyItem(`연장근로 ${pay.overtimeHours.toFixed(1)}h`, pay.overtimePay, "earning")}
       ${moneyItem(`야간가산 ${pay.nightHours.toFixed(1)}h`, pay.nightExtra, "earning")}
-      ${moneyItem("주휴", pay.weekly)}
+      ${moneyItem(`주휴 ${pay.weeklyHours.toFixed(1)}h`, pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
       ${moneyItem("대체공휴일", pay.substituteHoliday)}
       ${moneyItem("휴가", pay.vacation)}
@@ -1997,9 +2037,10 @@ function renderSalaryQuery(showAll) {
     </div>
     <div class="money-grid compact">
       ${summaryItem("총 근무시간", `${pay.totalHours.toFixed(1)}시간`)}
-      ${moneyItem("기본급", pay.basicPay)}
+      ${moneyItem("실근로 기본급", pay.basicPay)}
+      ${moneyItem("기본급성 합계", pay.baseLikePay)}
       ${moneyItem("근무", pay.workPay)}
-      ${moneyItem("주휴", pay.weekly)}
+      ${moneyItem(`주휴 ${pay.weeklyHours.toFixed(1)}h`, pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
       ${moneyItem("대체공휴일", pay.substituteHoliday)}
       ${moneyItem("휴가", pay.vacation)}
