@@ -8,11 +8,12 @@ const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v41";
+const APP_VERSION = "sync-v42";
 const RECEIPT_IMAGE_TARGET_CHARS = 220000;
 const RECEIPT_IMAGE_MAX_CHARS = 350000;
 const RECEIPT_TOTAL_MAX_CHARS = 3800000;
 const TESSERACT_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
+const JOURNAL_EXPENSE_TYPE = "daily-expenses";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -98,7 +99,9 @@ const els = {
   journalForm: document.querySelector("#journalForm"),
   journalDate: document.querySelector("#journalDate"),
   journalEntries: document.querySelector("#journalEntries"),
+  journalExpenses: document.querySelector("#journalExpenses"),
   addJournalEntry: document.querySelector("#addJournalEntry"),
+  addJournalExpense: document.querySelector("#addJournalExpense"),
   deleteJournal: document.querySelector("#deleteJournal"),
   updateNotesBtn: document.querySelector("#updateNotesBtn"),
   updateNotesDialog: document.querySelector("#updateNotesDialog")
@@ -317,19 +320,56 @@ function normalizeJournalReceipt(receipt) {
 }
 
 function normalizeJournalEntries(entries) {
-  return (Array.isArray(entries) ? entries : []).map((entry) => {
+  const workEntries = [];
+  const receipts = [];
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    if (entry?.entryType === JOURNAL_EXPENSE_TYPE) {
+      (Array.isArray(entry.receipts) ? entry.receipts : []).forEach((receipt) => {
+        const normalized = normalizeJournalReceipt(receipt);
+        if (normalized) receipts.push(normalized);
+      });
+      const legacyReceipt = normalizeJournalReceipt(entry.receipt);
+      if (legacyReceipt) receipts.push(legacyReceipt);
+      return;
+    }
+    const legacyReceipt = normalizeJournalReceipt(entry?.receipt);
+    if (legacyReceipt) receipts.push(legacyReceipt);
     const { startTime, endTime, period } = journalTimeValues(entry);
-    return {
+    const normalized = {
       siteName: String(entry?.siteName || ""),
       startTime,
       endTime,
       period: startTime && endTime ? `${startTime}-${endTime}` : period,
       tasks: Array.isArray(entry?.tasks) ? entry.tasks.filter(Boolean) : [],
       office: Boolean(entry?.office),
-      location: normalizeJournalLocation(entry?.location),
-      receipt: normalizeJournalReceipt(entry?.receipt)
+      location: normalizeJournalLocation(entry?.location)
     };
-  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location || entry.receipt);
+    if (normalized.office || normalized.siteName || normalized.startTime || normalized.endTime || normalized.period || normalized.tasks.length || normalized.location) {
+      workEntries.push(normalized);
+    }
+  });
+  return combineJournalRecords(workEntries, receipts);
+}
+
+function journalWorkEntries(entries) {
+  return (Array.isArray(entries) ? entries : []).filter((entry) => entry?.entryType !== JOURNAL_EXPENSE_TYPE);
+}
+
+function journalExpenseReceipts(entries) {
+  return (Array.isArray(entries) ? entries : []).flatMap((entry) => {
+    if (entry?.entryType === JOURNAL_EXPENSE_TYPE) {
+      return [entry.receipt, ...(Array.isArray(entry.receipts) ? entry.receipts : [])].filter(Boolean);
+    }
+    return entry?.receipt ? [entry.receipt] : [];
+  }).map(normalizeJournalReceipt).filter(Boolean);
+}
+
+function combineJournalRecords(workEntries, receipts) {
+  return [
+    ...(Array.isArray(workEntries) ? workEntries : []),
+    ...(Array.isArray(receipts) ? receipts : []).filter(Boolean)
+      .map((receipt) => ({ entryType: JOURNAL_EXPENSE_TYPE, receipt }))
+  ];
 }
 
 function normalizeJournalLocation(location) {
@@ -1505,22 +1545,24 @@ function escapeHtml(value) {
 }
 
 function journalDayHtml(date, key, entries, holiday) {
-  const office = entries.some((entry) => entry.office);
-  const siteCount = entries.filter((entry) => !entry.office).length;
-  const locationCount = entries.filter((entry) => entry.location).length;
-  const receiptCount = entries.filter((entry) => entry.receipt).length;
-  const expenseTotal = entries.reduce((sum, entry) => sum + Number(entry.receipt?.amount || 0), 0);
-  const taskNames = [...new Set(entries.flatMap((entry) => entry.tasks || []))].slice(0, 3);
-  const body = entries.length
-    ? `<span class="journal-stamp">${office && !siteCount ? "사무실" : `현장 ${siteCount || entries.length}곳`}</span>
+  const workEntries = journalWorkEntries(entries);
+  const receipts = journalExpenseReceipts(entries);
+  const office = workEntries.some((entry) => entry.office);
+  const siteCount = workEntries.filter((entry) => !entry.office).length;
+  const locationCount = workEntries.filter((entry) => entry.location).length;
+  const receiptCount = receipts.length;
+  const expenseTotal = receipts.reduce((sum, receipt) => sum + Number(receipt.amount || 0), 0);
+  const taskNames = [...new Set(workEntries.flatMap((entry) => entry.tasks || []))].slice(0, 3);
+  const body = workEntries.length || receiptCount
+    ? `${workEntries.length ? `<span class="journal-stamp">${office && !siteCount ? "사무실" : `현장 ${siteCount || workEntries.length}곳`}</span>` : ""}
        ${locationCount ? `<span class="journal-location-mark">위치 ${locationCount}</span>` : ""}
        ${receiptCount ? `<span class="journal-receipt-mark">지출 ${receiptCount}</span>` : ""}
-       <div class="mini-line">${taskNames.map(escapeHtml).join(" · ") || "업무일지 작성됨"}</div>`
+       ${workEntries.length ? `<div class="mini-line">${taskNames.map(escapeHtml).join(" · ") || "업무일지 작성됨"}</div>` : ""}`
     : "";
   return `
     <div class="date-row"><span class="date">${date.getDate()}</span><span class="holiday-name">${holiday?.name || ""}</span></div>
     <div class="day-body">${body}</div>
-    <div class="day-pay">${entries.length ? `${entries.length}건${expenseTotal ? ` · 지출 ${fmtMoney.format(expenseTotal)}` : ""}` : ""}</div>
+    <div class="day-pay">${workEntries.length || receiptCount ? `${workEntries.length ? `${workEntries.length}건` : ""}${workEntries.length && expenseTotal ? " · " : ""}${expenseTotal ? `지출 ${fmtMoney.format(expenseTotal)}` : ""}` : ""}</div>
   `;
 }
 
@@ -1586,6 +1628,15 @@ function journalReceiptTemplate(receipt) {
   `;
 }
 
+function journalExpenseTemplate(receipt, index) {
+  return `
+    <section class="journal-expense-entry" data-index="${index}">
+      <div class="entry-head"><strong>영수증 ${index + 1}</strong><button type="button" class="ghost-btn remove-journal-expense">삭제</button></div>
+      ${journalReceiptTemplate(receipt)}
+    </section>
+  `;
+}
+
 function journalEntryTemplate(entry = {}, index = 0) {
   const tasks = ["설치", "점검", "배터리 교체", "UPS 교체", "철거", "유급휴가"];
   const selected = new Set(entry.tasks || []);
@@ -1615,14 +1666,21 @@ function journalEntryTemplate(entry = {}, index = 0) {
         </div>
       </fieldset>
       ${journalLocationTemplate(entry.location)}
-      ${journalReceiptTemplate(entry.receipt)}
     </section>
   `;
 }
 
 function renderJournalForm(entries = []) {
-  const items = entries.length ? entries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null, receipt: null }];
+  const normalized = normalizeJournalEntries(entries);
+  const workEntries = journalWorkEntries(normalized);
+  const items = workEntries.length ? workEntries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null }];
   els.journalEntries.innerHTML = items.map(journalEntryTemplate).join("");
+  renderJournalExpenses(journalExpenseReceipts(normalized));
+}
+
+function renderJournalExpenses(receipts = []) {
+  const items = receipts.length ? receipts : [null];
+  els.journalExpenses.innerHTML = items.map(journalExpenseTemplate).join("");
 }
 
 function readJournalLocation(entry) {
@@ -1646,7 +1704,7 @@ function readJournalReceipt(entry) {
 }
 
 function readJournalForm() {
-  return Array.from(els.journalEntries.querySelectorAll(".journal-entry")).map((entry) => {
+  const workEntries = Array.from(els.journalEntries.querySelectorAll(".journal-entry")).map((entry) => {
     const startTime = normalizeClockTime(entry.querySelector(".journal-start-time").value);
     const endTime = normalizeClockTime(entry.querySelector(".journal-end-time").value);
     const legacyPeriod = entry.querySelector(".journal-period-legacy").value.trim();
@@ -1657,10 +1715,13 @@ function readJournalForm() {
       endTime,
       period: startTime && endTime ? `${startTime}-${endTime}` : legacyPeriod,
       tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value),
-      location: readJournalLocation(entry),
-      receipt: readJournalReceipt(entry)
+      location: readJournalLocation(entry)
     };
-  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location || entry.receipt);
+  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location);
+  const receipts = Array.from(els.journalExpenses.querySelectorAll(".journal-expense-entry"))
+    .map(readJournalReceipt)
+    .filter(Boolean);
+  return combineJournalRecords(workEntries, receipts);
 }
 
 function setJournalLocationUi(entry, location, statusText = "") {
@@ -1677,11 +1738,13 @@ function setJournalLocationUi(entry, location, statusText = "") {
 }
 
 function receiptImageChars(value = state) {
-  return Object.values(value.journals || {}).flat().reduce((sum, entry) => sum + String(entry.receipt?.dataUrl || "").length, 0);
+  return Object.values(value.journals || {}).reduce((sum, entries) => (
+    sum + journalExpenseReceipts(entries).reduce((receiptSum, receipt) => receiptSum + String(receipt.dataUrl || "").length, 0)
+  ), 0);
 }
 
 function openJournalReceiptImageChars() {
-  return Array.from(els.journalEntries.querySelectorAll(".journal-receipt-data"))
+  return Array.from(els.journalExpenses.querySelectorAll(".journal-receipt-data"))
     .reduce((sum, field) => sum + field.value.length, 0);
 }
 
@@ -2086,22 +2149,28 @@ els.deleteDay.addEventListener("click", () => {
 
 els.addJournalEntry.addEventListener("click", () => {
   const current = readJournalForm();
-  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null, receipt: null });
+  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null });
   renderJournalForm(current);
 });
 
-els.journalEntries.addEventListener("change", async (event) => {
+els.addJournalExpense.addEventListener("click", () => {
+  const receipts = Array.from(els.journalExpenses.querySelectorAll(".journal-expense-entry"))
+    .map(readJournalReceipt);
+  renderJournalExpenses([...receipts, null]);
+});
+
+els.journalExpenses.addEventListener("change", async (event) => {
   const input = event.target.closest(".journal-receipt-input");
   if (!input || !input.files?.[0]) return;
-  const entry = input.closest(".journal-entry");
+  const entry = input.closest(".journal-expense-entry");
   const status = entry.querySelector(".journal-receipt-status");
   const previous = readJournalReceipt(entry);
   input.disabled = true;
   status.textContent = "영수증 사진을 저장용으로 줄이는 중...";
   try {
     const dataUrl = await compressReceiptImage(input.files[0]);
-    const storedSelectedChars = (state.journals[selectedDateKey] || [])
-      .reduce((sum, item) => sum + String(item.receipt?.dataUrl || "").length, 0);
+    const storedSelectedChars = journalExpenseReceipts(state.journals[selectedDateKey] || [])
+      .reduce((sum, receipt) => sum + String(receipt.dataUrl || "").length, 0);
     const nextOpenChars = openJournalReceiptImageChars() - String(previous?.dataUrl || "").length + dataUrl.length;
     const nextTotal = receiptImageChars() - storedSelectedChars + nextOpenChars;
     if (nextTotal > RECEIPT_TOTAL_MAX_CHARS) throw new Error("저장된 영수증 사진이 많아 공간이 부족합니다. 오래된 사진을 일부 삭제해주세요.");
@@ -2136,6 +2205,18 @@ els.journalEntries.addEventListener("click", async (event) => {
     persistOpenJournalForm();
     return;
   }
+  if (!action.classList.contains("remove-journal-entry")) return;
+  const current = readJournalForm();
+  const workEntries = journalWorkEntries(current);
+  const receipts = journalExpenseReceipts(current);
+  workEntries.splice(Number(entry.dataset.index), 1);
+  renderJournalForm(combineJournalRecords(workEntries, receipts));
+});
+
+els.journalExpenses.addEventListener("click", async (event) => {
+  const action = event.target.closest("button");
+  if (!action) return;
+  const entry = action.closest(".journal-expense-entry");
   if (action.classList.contains("clear-journal-receipt")) {
     const receipt = readJournalReceipt(entry) || {};
     setJournalReceiptUi(entry, { ...receipt, dataUrl: "", fileName: "", capturedAt: "" }, "영수증 사진을 삭제했습니다.");
@@ -2146,10 +2227,11 @@ els.journalEntries.addEventListener("click", async (event) => {
     await extractReceiptText(entry, action);
     return;
   }
-  if (!action.classList.contains("remove-journal-entry")) return;
-  const current = readJournalForm();
-  current.splice(Number(entry.dataset.index), 1);
-  renderJournalForm(current);
+  if (!action.classList.contains("remove-journal-expense")) return;
+  const receipts = Array.from(els.journalExpenses.querySelectorAll(".journal-expense-entry"))
+    .map(readJournalReceipt);
+  receipts.splice(Number(entry.dataset.index), 1);
+  renderJournalExpenses(receipts);
 });
 
 els.journalForm.addEventListener("submit", (event) => {

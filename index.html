@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=pwa-sync-v41">
+  <link rel="stylesheet" href="styles.css?v=pwa-sync-v42">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -137,6 +137,10 @@
     <form method="dialog" id="journalForm">
       <div class="dialog-head"><h2 id="journalDate">업무일지</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
       <div class="journal-entries" id="journalEntries"></div>
+      <section class="journal-expenses-panel">
+        <div class="journal-expenses-head"><strong>오늘의 지출 · 영수증</strong><button type="button" id="addJournalExpense" class="ghost-btn">영수증 추가</button></div>
+        <div class="journal-expenses" id="journalExpenses"></div>
+      </section>
       <div class="dialog-actions">
         <button type="button" id="addJournalEntry" class="ghost-btn">현장 추가</button>
         <button type="button" id="deleteJournal" class="danger-btn">일지 삭제</button>
@@ -149,6 +153,7 @@
     <form method="dialog">
       <div class="dialog-head"><h2>업데이트 내역</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
       <div class="update-notes-list">
+        <section><strong>sync-v42</strong><time>2026.09.07</time><p>영수증 증빙을 현장별 입력에서 분리해 하루 업무일지 마지막의 지출 항목으로 이동했습니다.</p></section>
         <section><strong>sync-v41</strong><time>2026.09.07</time><p>업무일지 지출 내용·사용금액·영수증 촬영과 한글·숫자 추출을 추가했습니다. 추출 성공 후 사진은 자동 삭제됩니다.</p></section>
         <section><strong>sync-v40</strong><time>2026.08.21</time><p>제헌절을 수동 대체공휴일로 입력한 기존 기록도 자동 유급휴일로 분류하도록 수정했습니다.</p></section>
         <section><strong>sync-v39</strong><time>2026.08.21</time><p>주휴를 주별 개근 기준으로 수정하고 2026년 제헌절·노동절, 기본급성 합계와 연장수당 반올림을 반영했습니다.</p></section>
@@ -170,7 +175,7 @@
   </dialog>
 
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="tax-table-2026.js?v=pwa-sync-v41"></script>
-  <script src="app.js?v=pwa-sync-v41"></script>
+  <script src="tax-table-2026.js?v=pwa-sync-v42"></script>
+  <script src="app.js?v=pwa-sync-v42"></script>
 </body>
 </html>

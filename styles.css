@@ -628,9 +628,20 @@ legend {
 .journal-entries {
   display: grid;
   gap: 12px;
-  max-height: min(58vh, 560px);
-  overflow: auto;
   padding-right: 4px;
+}
+
+#journalDialog {
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  overflow: hidden;
+}
+
+#journalForm {
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .journal-entry {
@@ -712,6 +723,43 @@ legend {
   display: grid;
   gap: 10px;
   padding: 12px;
+}
+
+.journal-expenses-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 2px solid var(--line);
+}
+
+.journal-expenses-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.journal-expenses-head > strong {
+  font-size: 17px;
+}
+
+.journal-expenses-head .ghost-btn {
+  min-height: 38px;
+  padding-inline: 11px;
+}
+
+.journal-expenses {
+  display: grid;
+  gap: 12px;
+}
+
+.journal-expense-entry {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e4d18a;
+  border-radius: 8px;
+  background: #fffdf5;
 }
 
 .journal-receipt-field textarea {
@@ -1287,6 +1335,8 @@ dialog form {
   .journal-time-field { padding: 10px; }
   .journal-location-field { padding: 10px; }
   .journal-receipt-field { padding: 10px; }
+  .journal-expense-entry { padding: 10px; }
+  .journal-expenses-head { align-items: flex-start; }
   .journal-location-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .journal-location-actions .capture-journal-location { grid-column: 1 / -1; }
   .lock-card { padding: 22px; }
