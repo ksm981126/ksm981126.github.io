@@ -8,7 +8,11 @@ const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v40";
+const APP_VERSION = "sync-v41";
+const RECEIPT_IMAGE_TARGET_CHARS = 220000;
+const RECEIPT_IMAGE_MAX_CHARS = 350000;
+const RECEIPT_TOTAL_MAX_CHARS = 3800000;
+const TESSERACT_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
 const today = new Date();
 
@@ -23,6 +27,7 @@ let autoSaveTimer = null;
 let isApplyingRemoteState = false;
 let driveMeta = loadDriveMeta();
 let installPromptEvent = null;
+let tesseractLibraryPromise = null;
 let driveOperationQueue = Promise.resolve();
 let lastDriveRefreshAt = 0;
 
@@ -94,7 +99,9 @@ const els = {
   journalDate: document.querySelector("#journalDate"),
   journalEntries: document.querySelector("#journalEntries"),
   addJournalEntry: document.querySelector("#addJournalEntry"),
-  deleteJournal: document.querySelector("#deleteJournal")
+  deleteJournal: document.querySelector("#deleteJournal"),
+  updateNotesBtn: document.querySelector("#updateNotesBtn"),
+  updateNotesDialog: document.querySelector("#updateNotesDialog")
 };
 
 const lockEls = createPasswordUi();
@@ -291,6 +298,24 @@ function journalTimeValues(entry = {}) {
   return { startTime, endTime, period };
 }
 
+function normalizeJournalReceipt(receipt) {
+  const note = String(receipt?.note || "").trim();
+  const ocrText = String(receipt?.ocrText || "").trim().slice(0, 12000);
+  const amount = Math.max(0, Math.round(Number(receipt?.amount || 0)));
+  const dataUrl = String(receipt?.dataUrl || "");
+  const validImage = /^data:image\/(?:jpeg|png|webp);base64,/i.test(dataUrl) && dataUrl.length <= RECEIPT_IMAGE_MAX_CHARS;
+  const capturedAt = String(receipt?.capturedAt || "");
+  if (!note && !ocrText && !amount && !validImage) return null;
+  return {
+    note,
+    ocrText,
+    amount,
+    dataUrl: validImage ? dataUrl : "",
+    fileName: validImage ? String(receipt?.fileName || "영수증.jpg").slice(0, 120) : "",
+    capturedAt: validImage && capturedAt && !Number.isNaN(Date.parse(capturedAt)) ? new Date(capturedAt).toISOString() : ""
+  };
+}
+
 function normalizeJournalEntries(entries) {
   return (Array.isArray(entries) ? entries : []).map((entry) => {
     const { startTime, endTime, period } = journalTimeValues(entry);
@@ -301,9 +326,10 @@ function normalizeJournalEntries(entries) {
       period: startTime && endTime ? `${startTime}-${endTime}` : period,
       tasks: Array.isArray(entry?.tasks) ? entry.tasks.filter(Boolean) : [],
       office: Boolean(entry?.office),
-      location: normalizeJournalLocation(entry?.location)
+      location: normalizeJournalLocation(entry?.location),
+      receipt: normalizeJournalReceipt(entry?.receipt)
     };
-  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location);
+  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location || entry.receipt);
 }
 
 function normalizeJournalLocation(location) {
@@ -1482,16 +1508,19 @@ function journalDayHtml(date, key, entries, holiday) {
   const office = entries.some((entry) => entry.office);
   const siteCount = entries.filter((entry) => !entry.office).length;
   const locationCount = entries.filter((entry) => entry.location).length;
+  const receiptCount = entries.filter((entry) => entry.receipt).length;
+  const expenseTotal = entries.reduce((sum, entry) => sum + Number(entry.receipt?.amount || 0), 0);
   const taskNames = [...new Set(entries.flatMap((entry) => entry.tasks || []))].slice(0, 3);
   const body = entries.length
     ? `<span class="journal-stamp">${office && !siteCount ? "사무실" : `현장 ${siteCount || entries.length}곳`}</span>
        ${locationCount ? `<span class="journal-location-mark">위치 ${locationCount}</span>` : ""}
+       ${receiptCount ? `<span class="journal-receipt-mark">지출 ${receiptCount}</span>` : ""}
        <div class="mini-line">${taskNames.map(escapeHtml).join(" · ") || "업무일지 작성됨"}</div>`
     : "";
   return `
     <div class="date-row"><span class="date">${date.getDate()}</span><span class="holiday-name">${holiday?.name || ""}</span></div>
     <div class="day-body">${body}</div>
-    <div class="day-pay">${entries.length ? `${entries.length}건` : ""}</div>
+    <div class="day-pay">${entries.length ? `${entries.length}건${expenseTotal ? ` · 지출 ${fmtMoney.format(expenseTotal)}` : ""}` : ""}</div>
   `;
 }
 
@@ -1531,6 +1560,32 @@ function journalLocationTemplate(location) {
   `;
 }
 
+function journalReceiptTemplate(receipt) {
+  const normalized = normalizeJournalReceipt(receipt);
+  const hasImage = Boolean(normalized?.dataUrl);
+  return `
+    <fieldset class="journal-receipt-field">
+      <legend>지출 · 영수증</legend>
+      <label>사용 내용<textarea class="journal-receipt-note" rows="2" placeholder="교통비, 부품 구입 등">${escapeHtml(normalized?.note || "")}</textarea></label>
+      <label>사용금액<input type="number" class="journal-receipt-amount" min="0" step="1" inputmode="numeric" value="${normalized?.amount || ""}" placeholder="0"></label>
+      <div class="journal-receipt-preview" ${hasImage ? "" : "hidden"}>
+        <img class="journal-receipt-image" src="${hasImage ? normalized.dataUrl : ""}" alt="첨부한 영수증 미리보기">
+        <div class="journal-receipt-actions">
+          <a class="ghost-btn journal-receipt-open" href="${hasImage ? normalized.dataUrl : ""}" target="_blank" rel="noopener noreferrer">크게 보기</a>
+          <button type="button" class="ghost-btn clear-journal-receipt">사진 삭제</button>
+        </div>
+      </div>
+      <label class="file-btn journal-receipt-upload">${hasImage ? "영수증 사진 변경" : "영수증 사진 추가"}<input type="file" class="journal-receipt-input" accept="image/*" capture="environment"></label>
+      <button type="button" class="ghost-btn extract-journal-receipt" ${hasImage ? "" : "disabled"}>사진에서 글자 추출</button>
+      <label>추출된 글자<textarea class="journal-receipt-text" rows="6" placeholder="사진에서 글자를 추출하면 여기에 표시됩니다.">${escapeHtml(normalized?.ocrText || "")}</textarea></label>
+      <p class="journal-receipt-status" aria-live="polite">${hasImage ? `사진 저장됨${normalized.capturedAt ? ` · ${new Date(normalized.capturedAt).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}` : ""}` : normalized?.ocrText ? "추출된 글자만 저장됨" : "저장된 사진 없음"}</p>
+      <textarea class="journal-receipt-data" hidden>${hasImage ? normalized.dataUrl : ""}</textarea>
+      <input type="hidden" class="journal-receipt-file-name" value="${escapeHtml(normalized?.fileName || "")}">
+      <input type="hidden" class="journal-receipt-captured-at" value="${normalized?.capturedAt || ""}">
+    </fieldset>
+  `;
+}
+
 function journalEntryTemplate(entry = {}, index = 0) {
   const tasks = ["설치", "점검", "배터리 교체", "UPS 교체", "철거", "유급휴가"];
   const selected = new Set(entry.tasks || []);
@@ -1560,12 +1615,13 @@ function journalEntryTemplate(entry = {}, index = 0) {
         </div>
       </fieldset>
       ${journalLocationTemplate(entry.location)}
+      ${journalReceiptTemplate(entry.receipt)}
     </section>
   `;
 }
 
 function renderJournalForm(entries = []) {
-  const items = entries.length ? entries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null }];
+  const items = entries.length ? entries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null, receipt: null }];
   els.journalEntries.innerHTML = items.map(journalEntryTemplate).join("");
 }
 
@@ -1575,6 +1631,17 @@ function readJournalLocation(entry) {
     longitude: entry.querySelector(".journal-longitude").value,
     accuracy: entry.querySelector(".journal-accuracy").value,
     capturedAt: entry.querySelector(".journal-captured-at").value
+  });
+}
+
+function readJournalReceipt(entry) {
+  return normalizeJournalReceipt({
+    note: entry.querySelector(".journal-receipt-note").value,
+    ocrText: entry.querySelector(".journal-receipt-text").value,
+    amount: entry.querySelector(".journal-receipt-amount").value,
+    dataUrl: entry.querySelector(".journal-receipt-data").value,
+    fileName: entry.querySelector(".journal-receipt-file-name").value,
+    capturedAt: entry.querySelector(".journal-receipt-captured-at").value
   });
 }
 
@@ -1590,9 +1657,10 @@ function readJournalForm() {
       endTime,
       period: startTime && endTime ? `${startTime}-${endTime}` : legacyPeriod,
       tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value),
-      location: readJournalLocation(entry)
+      location: readJournalLocation(entry),
+      receipt: readJournalReceipt(entry)
     };
-  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location);
+  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location || entry.receipt);
 }
 
 function setJournalLocationUi(entry, location, statusText = "") {
@@ -1606,6 +1674,140 @@ function setJournalLocationUi(entry, location, statusText = "") {
   mapLink.hidden = !normalized;
   entry.querySelector(".clear-journal-location").hidden = !normalized;
   entry.querySelector(".journal-location-status").textContent = statusText || journalLocationText(normalized);
+}
+
+function receiptImageChars(value = state) {
+  return Object.values(value.journals || {}).flat().reduce((sum, entry) => sum + String(entry.receipt?.dataUrl || "").length, 0);
+}
+
+function openJournalReceiptImageChars() {
+  return Array.from(els.journalEntries.querySelectorAll(".journal-receipt-data"))
+    .reduce((sum, field) => sum + field.value.length, 0);
+}
+
+function loadReceiptImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("사진 파일을 읽을 수 없습니다."));
+    };
+    image.src = url;
+  });
+}
+
+async function compressReceiptImage(file) {
+  if (!file?.type?.startsWith("image/")) throw new Error("사진 파일만 선택할 수 있습니다.");
+  const image = await loadReceiptImage(file);
+  const longestSide = Math.max(image.naturalWidth, image.naturalHeight);
+  let scale = Math.min(1, 1600 / Math.max(1, longestSide));
+  let dataUrl = "";
+  const qualities = [0.82, 0.72, 0.62, 0.52, 0.44];
+
+  for (let sizeAttempt = 0; sizeAttempt < 5; sizeAttempt += 1) {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    for (const quality of qualities) {
+      dataUrl = canvas.toDataURL("image/jpeg", quality);
+      if (dataUrl.length <= RECEIPT_IMAGE_TARGET_CHARS) return dataUrl;
+    }
+    scale *= 0.82;
+  }
+
+  if (dataUrl.length > RECEIPT_IMAGE_MAX_CHARS) throw new Error("사진 용량을 줄이지 못했습니다. 사진을 잘라서 다시 선택해주세요.");
+  return dataUrl;
+}
+
+function setJournalReceiptUi(entry, receipt, statusText = "") {
+  const normalized = normalizeJournalReceipt(receipt);
+  const hasImage = Boolean(normalized?.dataUrl);
+  entry.querySelector(".journal-receipt-data").value = normalized?.dataUrl || "";
+  entry.querySelector(".journal-receipt-file-name").value = normalized?.fileName || "";
+  entry.querySelector(".journal-receipt-captured-at").value = normalized?.capturedAt || "";
+  const preview = entry.querySelector(".journal-receipt-preview");
+  const image = entry.querySelector(".journal-receipt-image");
+  const open = entry.querySelector(".journal-receipt-open");
+  preview.hidden = !hasImage;
+  image.src = normalized?.dataUrl || "";
+  open.href = normalized?.dataUrl || "";
+  entry.querySelector(".extract-journal-receipt").disabled = !hasImage;
+  entry.querySelector(".journal-receipt-upload").childNodes[0].textContent = hasImage ? "영수증 사진 변경" : "영수증 사진 추가";
+  entry.querySelector(".journal-receipt-status").textContent = statusText || (hasImage ? "사진 저장됨" : normalized?.ocrText ? "추출된 글자만 저장됨" : "저장된 사진 없음");
+}
+
+function loadTesseractLibrary() {
+  if (globalThis.Tesseract?.createWorker) return Promise.resolve(globalThis.Tesseract);
+  if (tesseractLibraryPromise) return tesseractLibraryPromise;
+  tesseractLibraryPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = TESSERACT_SCRIPT_URL;
+    script.async = true;
+    script.onload = () => globalThis.Tesseract?.createWorker
+      ? resolve(globalThis.Tesseract)
+      : reject(new Error("글자 추출 기능을 불러오지 못했습니다."));
+    script.onerror = () => reject(new Error("처음 글자 추출을 사용할 때는 인터넷 연결이 필요합니다."));
+    document.head.appendChild(script);
+  }).catch((error) => {
+    tesseractLibraryPromise = null;
+    throw error;
+  });
+  return tesseractLibraryPromise;
+}
+
+async function extractReceiptText(entry, button) {
+  const receipt = readJournalReceipt(entry);
+  const status = entry.querySelector(".journal-receipt-status");
+  if (!receipt?.dataUrl) {
+    status.textContent = "먼저 영수증 사진을 추가해주세요.";
+    return;
+  }
+  button.disabled = true;
+  status.textContent = "한글과 숫자를 읽을 준비 중...";
+  let worker = null;
+  try {
+    const tesseract = await loadTesseractLibrary();
+    worker = await tesseract.createWorker(["kor", "eng"], 1, {
+      logger: (message) => {
+        if (!Number.isFinite(message.progress)) return;
+        const percent = Math.round(message.progress * 100);
+        status.textContent = `영수증 글자 읽는 중 ${percent}%`;
+      }
+    });
+    const result = await worker.recognize(receipt.dataUrl);
+    const text = String(result?.data?.text || "")
+      .replace(/\r/g, "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    entry.querySelector(".journal-receipt-text").value = text;
+    if (text) {
+      setJournalReceiptUi(entry, {
+        ...receipt,
+        ocrText: text,
+        dataUrl: "",
+        fileName: "",
+        capturedAt: ""
+      }, "글자 추출 완료 · 사진은 삭제하고 글자만 저장했습니다.");
+    } else {
+      status.textContent = "글자를 찾지 못했습니다. 영수증을 정면에서 다시 찍어주세요.";
+    }
+    persistOpenJournalForm();
+  } catch (error) {
+    status.textContent = error.message || "글자 추출에 실패했습니다.";
+  } finally {
+    if (worker) await worker.terminate().catch(() => {});
+    button.disabled = !readJournalReceipt(entry)?.dataUrl;
+  }
 }
 
 function persistOpenJournalForm() {
@@ -1884,8 +2086,41 @@ els.deleteDay.addEventListener("click", () => {
 
 els.addJournalEntry.addEventListener("click", () => {
   const current = readJournalForm();
-  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null });
+  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null, receipt: null });
   renderJournalForm(current);
+});
+
+els.journalEntries.addEventListener("change", async (event) => {
+  const input = event.target.closest(".journal-receipt-input");
+  if (!input || !input.files?.[0]) return;
+  const entry = input.closest(".journal-entry");
+  const status = entry.querySelector(".journal-receipt-status");
+  const previous = readJournalReceipt(entry);
+  input.disabled = true;
+  status.textContent = "영수증 사진을 저장용으로 줄이는 중...";
+  try {
+    const dataUrl = await compressReceiptImage(input.files[0]);
+    const storedSelectedChars = (state.journals[selectedDateKey] || [])
+      .reduce((sum, item) => sum + String(item.receipt?.dataUrl || "").length, 0);
+    const nextOpenChars = openJournalReceiptImageChars() - String(previous?.dataUrl || "").length + dataUrl.length;
+    const nextTotal = receiptImageChars() - storedSelectedChars + nextOpenChars;
+    if (nextTotal > RECEIPT_TOTAL_MAX_CHARS) throw new Error("저장된 영수증 사진이 많아 공간이 부족합니다. 오래된 사진을 일부 삭제해주세요.");
+    const receipt = {
+      note: entry.querySelector(".journal-receipt-note").value,
+      ocrText: entry.querySelector(".journal-receipt-text").value,
+      amount: entry.querySelector(".journal-receipt-amount").value,
+      dataUrl,
+      fileName: input.files[0].name,
+      capturedAt: new Date().toISOString()
+    };
+    setJournalReceiptUi(entry, receipt, "사진 준비 완료 · 글자를 자동으로 읽습니다.");
+    await extractReceiptText(entry, entry.querySelector(".extract-journal-receipt"));
+  } catch (error) {
+    status.textContent = error.message || "영수증 사진 저장에 실패했습니다.";
+  } finally {
+    input.value = "";
+    input.disabled = false;
+  }
 });
 
 els.journalEntries.addEventListener("click", async (event) => {
@@ -1899,6 +2134,16 @@ els.journalEntries.addEventListener("click", async (event) => {
   if (action.classList.contains("clear-journal-location")) {
     setJournalLocationUi(entry, null);
     persistOpenJournalForm();
+    return;
+  }
+  if (action.classList.contains("clear-journal-receipt")) {
+    const receipt = readJournalReceipt(entry) || {};
+    setJournalReceiptUi(entry, { ...receipt, dataUrl: "", fileName: "", capturedAt: "" }, "영수증 사진을 삭제했습니다.");
+    persistOpenJournalForm();
+    return;
+  }
+  if (action.classList.contains("extract-journal-receipt")) {
+    await extractReceiptText(entry, action);
     return;
   }
   if (!action.classList.contains("remove-journal-entry")) return;
@@ -1920,6 +2165,8 @@ els.deleteJournal.addEventListener("click", () => {
   els.journalDialog.close();
   renderCalendar();
 });
+
+els.updateNotesBtn?.addEventListener("click", () => els.updateNotesDialog?.showModal());
 
 els.prevMonth.addEventListener("click", () => {
   viewMonth -= 1;

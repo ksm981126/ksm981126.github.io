@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=pwa-sync-v40">
+  <link rel="stylesheet" href="styles.css?v=pwa-sync-v41">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -59,6 +59,7 @@
         <label class="check-row"><input type="checkbox" id="driveAutoSync">자동 동기화</label>
         <p class="sync-status" id="driveStatus">Drive 연결 전입니다.</p>
         <p class="sync-status" id="appVersion">앱 버전 확인 중...</p>
+        <button id="updateNotesBtn" type="button" class="ghost-btn">업데이트 내역</button>
         <p class="sync-status">출근 기록, 시급/근무시간 설정, 세금 설정, 잠금 비밀번호가 함께 저장됩니다.</p>
       </div>
       <p class="small-note">월급일이 주말/공휴일이면 앞쪽 평일로 표시합니다. 급여는 이번 달에 받는 전월 근무분 기준입니다.</p>
@@ -144,8 +145,32 @@
     </form>
   </dialog>
 
+  <dialog id="updateNotesDialog" class="wide-dialog">
+    <form method="dialog">
+      <div class="dialog-head"><h2>업데이트 내역</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
+      <div class="update-notes-list">
+        <section><strong>sync-v41</strong><time>2026.09.07</time><p>업무일지 지출 내용·사용금액·영수증 촬영과 한글·숫자 추출을 추가했습니다. 추출 성공 후 사진은 자동 삭제됩니다.</p></section>
+        <section><strong>sync-v40</strong><time>2026.08.21</time><p>제헌절을 수동 대체공휴일로 입력한 기존 기록도 자동 유급휴일로 분류하도록 수정했습니다.</p></section>
+        <section><strong>sync-v39</strong><time>2026.08.21</time><p>주휴를 주별 개근 기준으로 수정하고 2026년 제헌절·노동절, 기본급성 합계와 연장수당 반올림을 반영했습니다.</p></section>
+        <section><strong>sync-v38</strong><time>2026.08.21</time><p>2026년 4대보험·간이세액표와 토요일 주 40시간 초과 연장근로 계산을 반영했습니다.</p></section>
+        <section><strong>sync-v37</strong><time>2026.08.12</time><p>달력에는 연장·야간 시간만 표시하고 금액은 월 급여 상세로 이동했습니다.</p></section>
+        <section><strong>sync-v36</strong><time>2026.08.11</time><p>저장한 위치를 앱 중단 없이 웹 지도에서 확인하도록 변경했습니다.</p></section>
+        <section><strong>sync-v35</strong><time>2026.08.11</time><p>현재 시급을 10,350원으로 보정했습니다.</p></section>
+        <section><strong>sync-v34</strong><time>2026.08.11</time><p>업무일지에 위치 좌표·정확도·기록 시각 증빙을 추가했습니다.</p></section>
+        <section><strong>sync-v33</strong><time>2026.08.11</time><p>달력에 연장·야간 시간과 금액 표시를 추가했습니다.</p></section>
+        <section><strong>sync-v32</strong><time>2026.08.07</time><p>업무일지 작업기간 입력을 모바일 시간 선택 방식으로 변경했습니다.</p></section>
+        <section><strong>sync-v31</strong><time>2026.08.05</time><p>PC와 모바일이 하나의 Drive 앱 데이터 파일을 사용하도록 통합했습니다.</p></section>
+        <section><strong>sync-v30</strong><time>2026.08.05</time><p>Drive에서 가장 최신인 저장본을 우선 선택하도록 수정했습니다.</p></section>
+        <section><strong>sync-v29</strong><time>2026.08.05</time><p>한 기기에서 삭제한 기록도 다른 기기에 동기화되도록 수정했습니다.</p></section>
+        <section><strong>sync-v28</strong><time>2026.08.05</time><p>Drive 저장을 중간 상태가 남지 않는 단일 스냅샷 방식으로 개선했습니다.</p></section>
+        <section><strong>sync-v27</strong><time>2026.08.05</time><p>Drive 저장 시 기존 기록이 사라지지 않도록 병합 방식을 보강했습니다.</p></section>
+      </div>
+      <div class="dialog-actions"><button value="cancel" class="primary-btn">확인</button></div>
+    </form>
+  </dialog>
+
   <script src="https://accounts.google.com/gsi/client" async defer></script>
-  <script src="tax-table-2026.js?v=pwa-sync-v40"></script>
-  <script src="app.js?v=pwa-sync-v40"></script>
+  <script src="tax-table-2026.js?v=pwa-sync-v41"></script>
+  <script src="app.js?v=pwa-sync-v41"></script>
 </body>
 </html>
