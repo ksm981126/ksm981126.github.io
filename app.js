@@ -8,7 +8,7 @@ const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v42";
+const APP_VERSION = "sync-v43";
 const RECEIPT_IMAGE_TARGET_CHARS = 220000;
 const RECEIPT_IMAGE_MAX_CHARS = 350000;
 const RECEIPT_TOTAL_MAX_CHARS = 3800000;
@@ -98,6 +98,10 @@ const els = {
   journalDialog: document.querySelector("#journalDialog"),
   journalForm: document.querySelector("#journalForm"),
   journalDate: document.querySelector("#journalDate"),
+  journalWorkTab: document.querySelector("#journalWorkTab"),
+  journalReceiptTab: document.querySelector("#journalReceiptTab"),
+  journalWorkPanel: document.querySelector("#journalWorkPanel"),
+  journalReceiptPanel: document.querySelector("#journalReceiptPanel"),
   journalEntries: document.querySelector("#journalEntries"),
   journalExpenses: document.querySelector("#journalExpenses"),
   addJournalEntry: document.querySelector("#addJournalEntry"),
@@ -1673,9 +1677,18 @@ function journalEntryTemplate(entry = {}, index = 0) {
 function renderJournalForm(entries = []) {
   const normalized = normalizeJournalEntries(entries);
   const workEntries = journalWorkEntries(normalized);
-  const items = workEntries.length ? workEntries : [{ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null }];
-  els.journalEntries.innerHTML = items.map(journalEntryTemplate).join("");
+  renderJournalWorkEntries(workEntries);
   renderJournalExpenses(journalExpenseReceipts(normalized));
+  setJournalTab("work");
+}
+
+function blankJournalEntry() {
+  return { siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null };
+}
+
+function renderJournalWorkEntries(entries = []) {
+  const items = entries.length ? entries : [blankJournalEntry()];
+  els.journalEntries.innerHTML = items.map(journalEntryTemplate).join("");
 }
 
 function renderJournalExpenses(receipts = []) {
@@ -1703,8 +1716,8 @@ function readJournalReceipt(entry) {
   });
 }
 
-function readJournalForm() {
-  const workEntries = Array.from(els.journalEntries.querySelectorAll(".journal-entry")).map((entry) => {
+function readJournalWorkEntries(includeEmpty = false) {
+  const entries = Array.from(els.journalEntries.querySelectorAll(".journal-entry")).map((entry) => {
     const startTime = normalizeClockTime(entry.querySelector(".journal-start-time").value);
     const endTime = normalizeClockTime(entry.querySelector(".journal-end-time").value);
     const legacyPeriod = entry.querySelector(".journal-period-legacy").value.trim();
@@ -1717,11 +1730,28 @@ function readJournalForm() {
       tasks: Array.from(entry.querySelectorAll(".journal-task:checked")).map((task) => task.value),
       location: readJournalLocation(entry)
     };
-  }).filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location);
+  });
+  return includeEmpty
+    ? entries
+    : entries.filter((entry) => entry.office || entry.siteName || entry.startTime || entry.endTime || entry.period || entry.tasks.length || entry.location);
+}
+
+function readJournalForm() {
+  const workEntries = readJournalWorkEntries();
   const receipts = Array.from(els.journalExpenses.querySelectorAll(".journal-expense-entry"))
     .map(readJournalReceipt)
     .filter(Boolean);
   return combineJournalRecords(workEntries, receipts);
+}
+
+function setJournalTab(tab) {
+  const showReceipts = tab === "receipts";
+  els.journalWorkTab.classList.toggle("active", !showReceipts);
+  els.journalReceiptTab.classList.toggle("active", showReceipts);
+  els.journalWorkTab.setAttribute("aria-selected", String(!showReceipts));
+  els.journalReceiptTab.setAttribute("aria-selected", String(showReceipts));
+  els.journalWorkPanel.hidden = showReceipts;
+  els.journalReceiptPanel.hidden = !showReceipts;
 }
 
 function setJournalLocationUi(entry, location, statusText = "") {
@@ -2148,10 +2178,13 @@ els.deleteDay.addEventListener("click", () => {
 });
 
 els.addJournalEntry.addEventListener("click", () => {
-  const current = readJournalForm();
-  current.push({ siteName: "", startTime: "", endTime: "", period: "", tasks: [], office: false, location: null });
-  renderJournalForm(current);
+  const workEntries = readJournalWorkEntries(true);
+  workEntries.push(blankJournalEntry());
+  renderJournalWorkEntries(workEntries);
 });
+
+els.journalWorkTab.addEventListener("click", () => setJournalTab("work"));
+els.journalReceiptTab.addEventListener("click", () => setJournalTab("receipts"));
 
 els.addJournalExpense.addEventListener("click", () => {
   const receipts = Array.from(els.journalExpenses.querySelectorAll(".journal-expense-entry"))
@@ -2206,11 +2239,9 @@ els.journalEntries.addEventListener("click", async (event) => {
     return;
   }
   if (!action.classList.contains("remove-journal-entry")) return;
-  const current = readJournalForm();
-  const workEntries = journalWorkEntries(current);
-  const receipts = journalExpenseReceipts(current);
+  const workEntries = readJournalWorkEntries(true);
   workEntries.splice(Number(entry.dataset.index), 1);
-  renderJournalForm(combineJournalRecords(workEntries, receipts));
+  renderJournalWorkEntries(workEntries);
 });
 
 els.journalExpenses.addEventListener("click", async (event) => {

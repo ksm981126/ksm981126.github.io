@@ -631,6 +631,56 @@ legend {
   padding-right: 4px;
 }
 
+.journal-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #eef3f1;
+}
+
+.journal-tab {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-weight: 900;
+}
+
+.journal-tab.active {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(28, 52, 48, .12);
+}
+
+.journal-tab-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.journal-tab-panel[hidden] {
+  display: none;
+}
+
+.journal-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.journal-panel-head > strong {
+  font-size: 17px;
+}
+
+.journal-panel-head .ghost-btn {
+  min-height: 38px;
+  padding-inline: 11px;
+}
+
 #journalDialog {
   max-height: calc(100vh - 20px);
   max-height: calc(100dvh - 20px);
@@ -723,29 +773,6 @@ legend {
   display: grid;
   gap: 10px;
   padding: 12px;
-}
-
-.journal-expenses-panel {
-  display: grid;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 2px solid var(--line);
-}
-
-.journal-expenses-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.journal-expenses-head > strong {
-  font-size: 17px;
-}
-
-.journal-expenses-head .ghost-btn {
-  min-height: 38px;
-  padding-inline: 11px;
 }
 
 .journal-expenses {
@@ -1336,7 +1363,7 @@ dialog form {
   .journal-location-field { padding: 10px; }
   .journal-receipt-field { padding: 10px; }
   .journal-expense-entry { padding: 10px; }
-  .journal-expenses-head { align-items: flex-start; }
+  .journal-panel-head { align-items: flex-start; }
   .journal-location-actions { display: grid; grid-template-columns: 1fr 1fr; }
   .journal-location-actions .capture-journal-location { grid-column: 1 / -1; }
   .lock-card { padding: 22px; }
