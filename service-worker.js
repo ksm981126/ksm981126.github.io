@@ -1,10 +1,10 @@
-const CACHE_NAME = "salary-calendar-offline-v48";
+const CACHE_NAME = "salary-calendar-offline-v49";
+const CACHE_PREFIX = "salary-calendar-offline-";
 const FILES = [
-  "./",
   "./index.html",
-  "./styles.css?v=pwa-sync-v43",
-  "./tax-table-2026.js?v=pwa-sync-v43",
-  "./app.js?v=pwa-sync-v43",
+  "./styles.css?v=pwa-sync-v44",
+  "./tax-table-2026.js?v=pwa-sync-v44",
+  "./app.js?v=pwa-sync-v44",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-192.png",
@@ -12,45 +12,47 @@ const FILES = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(FILES))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(FILES)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
+  event.waitUntil(caches.keys()
+    .then((keys) => Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+      .map((key) => caches.delete(key))))
+    .then(() => self.clients.claim()));
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
   const request = event.request;
   const url = new URL(request.url);
-  const isAppShell = request.mode === "navigate" || [".html", ".css", ".js"].some((ext) => url.pathname.endsWith(ext));
-
-  if (isAppShell) {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+  if (request.method !== "GET" || url.origin !== self.location.origin) return;
+  const scope = new URL("./", self.location.href);
+  if (!url.pathname.startsWith(scope.pathname)) return;
+  const indexUrl = new URL("./index.html", scope).href;
+  if (request.mode === "navigate") {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE_NAME);
+      try {
+        const response = await fetch(request);
+        if (response.ok) {
+          await cache.put(indexUrl, response.clone());
           return response;
-        })
-        .catch(() => caches.match(request).then((cached) => cached || caches.match("./index.html")))
-    );
+        }
+        return await cache.match(indexUrl) || response;
+      } catch {
+        return await cache.match(indexUrl) || Response.error();
+      }
+    })());
     return;
   }
-
-  event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
-      const copy = response.clone();
-      caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-      return response;
-    }))
-  );
+  const allowed = FILES.some((path) => new URL(path, scope).href === url.href);
+  if (!allowed) return;
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  })());
 });

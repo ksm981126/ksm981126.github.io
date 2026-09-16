@@ -1,36 +1,24 @@
 const STORAGE_KEY = "salary-calendar-v4";
 const OLD_KEYS = ["salary-calendar-v3", "salary-calendar-v2", "salary-calendar-v1"];
-const GOOGLE_CLIENT_ID = "583902313340-iphddiep3ami3h3ugsef7de5l7v9p9c9.apps.googleusercontent.com";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
-const DRIVE_FILE_NAME = "salary-calendar-data.json";
-const DRIVE_META_KEY = "salary-calendar-drive-meta";
-const DRIVE_TOKEN_KEY = "salary-calendar-drive-token";
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v43";
+const APP_VERSION = "sync-v44";
 const RECEIPT_IMAGE_TARGET_CHARS = 220000;
 const RECEIPT_IMAGE_MAX_CHARS = 350000;
 const RECEIPT_TOTAL_MAX_CHARS = 3800000;
 const TESSERACT_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js";
 const JOURNAL_EXPENSE_TYPE = "daily-expenses";
 const fmtMoney = new Intl.NumberFormat("ko-KR", { style: "currency", currency: "KRW", maximumFractionDigits: 0 });
-const today = new Date();
+let today = new Date();
 
 let state = loadState();
 let viewYear = today.getFullYear();
 let viewMonth = today.getMonth();
 let selectedDateKey = "";
 let appMode = "salary";
-let tokenClient = null;
-let accessToken = loadStoredDriveToken();
-let autoSaveTimer = null;
-let isApplyingRemoteState = false;
-let driveMeta = loadDriveMeta();
 let installPromptEvent = null;
 let tesseractLibraryPromise = null;
-let driveOperationQueue = Promise.resolve();
-let lastDriveRefreshAt = 0;
 
 const els = {
   settingsPanel: document.querySelector("#settingsPanel"),
@@ -80,12 +68,8 @@ const els = {
   vacationDay: document.querySelector("#vacationDay"),
   deleteDay: document.querySelector("#deleteDay"),
   exportData: document.querySelector("#exportData"),
+  localSaveStatus: document.querySelector("#localSaveStatus"),
   importData: document.querySelector("#importData"),
-  driveConnect: document.querySelector("#driveConnect"),
-  driveLoad: document.querySelector("#driveLoad"),
-  driveSave: document.querySelector("#driveSave"),
-  driveAutoSync: document.querySelector("#driveAutoSync"),
-  driveStatus: document.querySelector("#driveStatus"),
   installApp: document.querySelector("#installApp"),
   appVersion: document.querySelector("#appVersion"),
   salaryDialog: document.querySelector("#salaryDialog"),
@@ -215,7 +199,7 @@ async function unlockApp(password) {
 
 function defaultState() {
   return {
-    // A fresh device has no user change yet, so Drive data must take priority.
+    // Preserve existing backup timestamps.
     updatedAt: "",
     settings: {
       hourlyWage: 10350,
@@ -428,9 +412,15 @@ function loadState() {
 }
 
 function saveState() {
-  if (!isApplyingRemoteState) state.updatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  scheduleDriveAutoSave();
+  state.updatedAt = new Date().toISOString();
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    els.localSaveStatus.textContent = `이 기기에 저장됨 · ${new Date().toLocaleTimeString("ko-KR")}`;
+  } catch (error) {
+    els.localSaveStatus.textContent = "저장 실패 · 백업 내보내기로 기록을 보관해주세요.";
+    alert("기기에 저장하지 못했습니다. 저장 공간을 확인하고, 창을 닫기 전에 백업 내보내기로 기록을 보관해주세요.");
+    throw error;
+  }
 }
 
 function markSettingsChanged() {
@@ -443,10 +433,6 @@ function markDayChanged(key, deleted = false) {
 
 function markJournalChanged(key, deleted = false) {
   state.syncMeta.journals[key] = { updatedAt: new Date().toISOString(), deleted };
-}
-
-function persistStateWithoutTouchingSyncTime() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
 function applyCurrentWageCorrection() {
@@ -474,436 +460,6 @@ function apply2026DeductionSettings() {
     markSettingsChanged();
     saveState();
   }
-}
-
-function loadDriveMeta() {
-  try {
-    return JSON.parse(localStorage.getItem(DRIVE_META_KEY)) || { fileId: "", autoSync: false, lastSync: "" };
-  } catch {
-    return { fileId: "", autoSync: false, lastSync: "" };
-  }
-}
-
-function saveDriveMeta() {
-  localStorage.setItem(DRIVE_META_KEY, JSON.stringify(driveMeta));
-}
-
-function loadStoredDriveToken() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(DRIVE_TOKEN_KEY) || "{}");
-    if (saved.scope === DRIVE_SCOPE && saved.accessToken && saved.expiresAt && Number(saved.expiresAt) > Date.now() + 120000) {
-      return saved.accessToken;
-    }
-  } catch {}
-  localStorage.removeItem(DRIVE_TOKEN_KEY);
-  return "";
-}
-
-function rememberDriveToken(token, expiresIn = 3600) {
-  accessToken = token;
-  localStorage.setItem(DRIVE_TOKEN_KEY, JSON.stringify({
-    accessToken: token,
-    scope: DRIVE_SCOPE,
-    expiresAt: Date.now() + Math.max(60, Number(expiresIn || 3600) - 120) * 1000
-  }));
-  updateDriveControls();
-}
-
-function clearDriveToken() {
-  accessToken = "";
-  localStorage.removeItem(DRIVE_TOKEN_KEY);
-  updateDriveControls();
-}
-
-function setDriveStatus(message) {
-  if (els.driveStatus) els.driveStatus.textContent = message;
-}
-
-function updateDriveControls() {
-  if (!els.driveAutoSync) return;
-  els.driveAutoSync.checked = Boolean(driveMeta.autoSync);
-  const connected = Boolean(accessToken);
-  if (els.driveConnect) els.driveConnect.textContent = connected ? "Google Drive 연결됨" : "Google Drive 연결";
-}
-
-function waitForGoogleIdentity() {
-  return new Promise((resolve, reject) => {
-    if (window.google?.accounts?.oauth2) {
-      resolve();
-      return;
-    }
-    let tries = 0;
-    const timer = setInterval(() => {
-      tries += 1;
-      if (window.google?.accounts?.oauth2) {
-        clearInterval(timer);
-        resolve();
-      } else if (tries > 60) {
-        clearInterval(timer);
-        reject(new Error("Google 로그인 스크립트를 불러오지 못했습니다."));
-      }
-    }, 100);
-  });
-}
-
-async function ensureDriveToken(prompt = "", options = {}) {
-  if (accessToken) return accessToken;
-  const allowPopup = options.allowPopup !== false;
-  if (!allowPopup) {
-    throw new Error("Google Drive 연결을 먼저 눌러주세요. 한 번 연결하면 만료 전까지 저장/불러오기는 자동으로 됩니다.");
-  }
-  await waitForGoogleIdentity();
-  return new Promise((resolve, reject) => {
-    tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: DRIVE_SCOPE,
-      prompt,
-      callback: (response) => {
-        if (response.error) {
-          reject(new Error(response.error));
-          return;
-        }
-        rememberDriveToken(response.access_token, response.expires_in);
-        resolve(response.access_token);
-      }
-    });
-    tokenClient.requestAccessToken({ prompt });
-  });
-}
-
-async function driveFetch(url, options = {}) {
-  const token = await ensureDriveToken("", { allowPopup: false });
-  const response = await fetch(url, {
-    cache: "no-store",
-    ...options,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {})
-    }
-  });
-  if (response.status === 401) {
-    clearDriveToken();
-    throw new Error("Google Drive 인증 시간이 만료됐습니다. Google Drive 연결을 한 번 다시 눌러주세요.");
-  }
-  if (!response.ok) {
-    const text = await response.text();
-    const error = new Error(text || `Drive 요청 실패: ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return response;
-}
-
-async function listDriveFiles() {
-  const query = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
-  const url = `https://www.googleapis.com/drive/v3/files?q=${query}&spaces=appDataFolder&orderBy=modifiedTime desc&fields=files(id,name,modifiedTime)&pageSize=100`;
-  const response = await driveFetch(url);
-  const data = await response.json();
-  return data.files || [];
-}
-
-async function findDriveFile() {
-  return (await listDriveFiles())[0] || null;
-}
-
-async function getDriveFileInfo(fileId) {
-  if (!fileId) return null;
-  try {
-    const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,modifiedTime,trashed`);
-    const file = await response.json();
-    return file.trashed || file.name !== DRIVE_FILE_NAME ? null : file;
-  } catch (error) {
-    if (error.status === 404) return null;
-    throw error;
-  }
-}
-
-function rememberDriveFile(file) {
-  driveMeta.fileId = file?.id || "";
-  driveMeta.lastRemoteModified = file?.modifiedTime || "";
-  saveDriveMeta();
-}
-
-async function createDriveSnapshot(payload) {
-  const metadata = {
-    name: DRIVE_FILE_NAME,
-    mimeType: "application/json",
-    parents: ["appDataFolder"]
-  };
-  const boundary = "salary_calendar_boundary";
-  const body = [
-    `--${boundary}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    JSON.stringify(metadata),
-    `--${boundary}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    JSON.stringify(payload, null, 2),
-    `--${boundary}--`
-  ].join("\r\n");
-  const response = await driveFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,modifiedTime", {
-    method: "POST",
-    headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
-    body
-  });
-  return response.json();
-}
-
-async function createDriveFile() {
-  const data = await createDriveSnapshot(state);
-  driveMeta.fileId = data.id;
-  driveMeta.lastSync = new Date().toISOString();
-  driveMeta.lastRemoteModified = data.modifiedTime || "";
-  saveDriveMeta();
-  return data.id;
-}
-
-async function updateDriveFile(fileId, payload) {
-  const response = await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media&fields=id,modifiedTime`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json; charset=UTF-8" },
-    body: JSON.stringify(payload, null, 2)
-  });
-  const data = await response.json();
-  return { id: fileId, ...data };
-}
-
-async function deleteDriveFile(fileId) {
-  if (!fileId) return;
-  await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, { method: "DELETE" });
-}
-
-async function cleanupOldDriveSnapshots(keepId) {
-  const files = await listDriveFiles();
-  await Promise.allSettled(
-    files.filter((file) => file.id !== keepId).map((file) => deleteDriveFile(file.id))
-  );
-}
-
-async function getDriveFileId() {
-  const cachedFile = await getDriveFileInfo(driveMeta.fileId);
-  const latestFile = await findDriveFile();
-  const candidates = [cachedFile, latestFile]
-    .filter((file, index, files) => file?.id && files.findIndex((item) => item?.id === file.id) === index)
-    .sort((left, right) => (Date.parse(right.modifiedTime || "") || 0) - (Date.parse(left.modifiedTime || "") || 0));
-  const selected = candidates[0];
-  if (selected) {
-    rememberDriveFile(selected);
-    return selected.id;
-  }
-  return createDriveFile();
-}
-
-function queueDriveOperation(operation) {
-  const pending = driveOperationQueue.then(operation, operation);
-  driveOperationQueue = pending.catch(() => {});
-  return pending;
-}
-
-function recordSummary(value) {
-  const recordKeys = [...new Set([...Object.keys(value.days), ...Object.keys(value.journals)])].sort();
-  const latestRecord = recordKeys.at(-1) || "";
-  const latestText = latestRecord ? `마지막 기록 ${latestRecord.replaceAll("-", ". ")}.` : "저장된 기록이 없습니다.";
-  return { count: recordKeys.length, latestRecord, latestText };
-}
-
-async function downloadDriveState(fileId) {
-  const response = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
-  const rawRemote = await response.json();
-  if (!rawRemote || typeof rawRemote !== "object" || !rawRemote.settings || !rawRemote.days) {
-    throw new Error("Drive 파일 형식이 올바르지 않습니다.");
-  }
-  return normalizeState(rawRemote);
-}
-
-function canonicalValue(value) {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.keys(value).sort().reduce((result, key) => {
-    result[key] = canonicalValue(value[key]);
-    return result;
-  }, {});
-}
-
-function sameStatePayload(left, right) {
-  const comparable = (value) => ({
-    settings: value.settings,
-    days: value.days,
-    journals: value.journals,
-    syncMeta: value.syncMeta
-  });
-  return JSON.stringify(canonicalValue(comparable(left))) === JSON.stringify(canonicalValue(comparable(right)));
-}
-
-function firstDifferencePath(left, right, path = "data") {
-  if (Object.is(left, right)) return "";
-  if (typeof left !== typeof right || left === null || right === null) return path;
-  if (typeof left !== "object") return path;
-  if (Array.isArray(left) !== Array.isArray(right)) return path;
-  if (Array.isArray(left) && left.length !== right.length) return `${path}.length`;
-  const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort();
-  for (const key of keys) {
-    if (!(key in left) || !(key in right)) return `${path}.${key}`;
-    const difference = firstDifferencePath(left[key], right[key], `${path}.${key}`);
-    if (difference) return difference;
-  }
-  return "";
-}
-
-async function verifyDriveUpload(fileId, expected) {
-  let verified = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
-    verified = await downloadDriveState(fileId);
-    if (sameStatePayload(verified, expected)) return verified;
-  }
-  const verifiedData = {
-    settings: verified.settings,
-    days: verified.days,
-    journals: verified.journals,
-    syncMeta: verified.syncMeta
-  };
-  const expectedData = {
-    settings: expected.settings,
-    days: expected.days,
-    journals: expected.journals,
-    syncMeta: expected.syncMeta
-  };
-  throw new Error(`업로드한 내용과 Drive 원본의 ${firstDifferencePath(verifiedData, expectedData)} 항목이 일치하지 않습니다.`);
-}
-
-function syncTime(meta) {
-  return Date.parse(meta?.updatedAt || "") || 0;
-}
-
-function mergeRecordCollection(remoteRecords, localRecords, remoteMeta, localMeta) {
-  const records = {};
-  const meta = {};
-  const keys = [...new Set([
-    ...Object.keys(remoteRecords),
-    ...Object.keys(localRecords),
-    ...Object.keys(remoteMeta),
-    ...Object.keys(localMeta)
-  ])];
-
-  keys.forEach((key) => {
-    const remoteEntry = remoteMeta[key] || null;
-    const localEntry = localMeta[key] || null;
-    const useLocal = !remoteEntry || (localEntry && syncTime(localEntry) >= syncTime(remoteEntry));
-    const selectedMeta = normalizeSyncEntry(useLocal ? localEntry : remoteEntry);
-    const selectedRecord = useLocal ? localRecords[key] : remoteRecords[key];
-
-    meta[key] = selectedMeta;
-    if (!selectedMeta.deleted && selectedRecord) records[key] = selectedRecord;
-  });
-
-  return { records, meta };
-}
-
-function mergeStateForDriveSave(remote, local) {
-  const mergedDays = mergeRecordCollection(
-    remote.days,
-    local.days,
-    remote.syncMeta.days,
-    local.syncMeta.days
-  );
-  const mergedJournals = mergeRecordCollection(
-    remote.journals,
-    local.journals,
-    remote.syncMeta.journals,
-    local.syncMeta.journals
-  );
-  const useLocalSettings = syncTime({ updatedAt: local.syncMeta.settingsUpdatedAt })
-    >= syncTime({ updatedAt: remote.syncMeta.settingsUpdatedAt });
-
-  return normalizeState({
-    updatedAt: local.updatedAt,
-    settings: useLocalSettings ? local.settings : remote.settings,
-    days: mergedDays.records,
-    journals: mergedJournals.records,
-    syncMeta: {
-      settingsUpdatedAt: useLocalSettings
-        ? local.syncMeta.settingsUpdatedAt
-        : remote.syncMeta.settingsUpdatedAt,
-      days: mergedDays.meta,
-      journals: mergedJournals.meta
-    }
-  });
-}
-
-function loadFromDrive(options = {}) {
-  return queueDriveOperation(() => loadFromDriveNow(options));
-}
-
-async function loadFromDriveNow(options = {}) {
-  setDriveStatus("Drive에서 불러오는 중...");
-  const fileId = await getDriveFileId();
-  const remote = await downloadDriveState(fileId);
-  const localTime = Date.parse(state.updatedAt || "") || 0;
-  const remoteTime = Date.parse(remote.updatedAt || "") || 0;
-  if (!options.force && remoteTime < localTime) {
-    if (options.silent) {
-      setDriveStatus("이 기기에 아직 Drive에 저장하지 않은 변경사항이 있어 자동 불러오기를 건너뛰었습니다.");
-      return false;
-    }
-    if (!confirm("현재 기기 데이터가 Drive보다 최신입니다. 그래도 Drive 데이터로 덮어쓸까요?")) {
-      setDriveStatus("Drive 불러오기를 취소했습니다.");
-      return false;
-    }
-  }
-  isApplyingRemoteState = true;
-  state = remote;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  isApplyingRemoteState = false;
-  driveMeta.lastSync = new Date().toISOString();
-  driveMeta.lastRemoteUpdatedAt = remote.updatedAt || "";
-  saveDriveMeta();
-  renderSettings();
-  renderCalendar();
-  applyLockScreen();
-  const summary = recordSummary(remote);
-  lastDriveRefreshAt = Date.now();
-  setDriveStatus(`Drive 불러오기 완료. ${summary.latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
-  return true;
-}
-
-function saveToDrive() {
-  return queueDriveOperation(saveToDriveNow);
-}
-
-async function saveToDriveNow() {
-  setDriveStatus("Drive에 저장하는 중...");
-  state.updatedAt = new Date().toISOString();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  const snapshot = normalizeState(JSON.parse(JSON.stringify(state)));
-  const fileId = await getDriveFileId();
-  const remoteBeforeSave = await downloadDriveState(fileId);
-  const uploadState = mergeStateForDriveSave(remoteBeforeSave, snapshot);
-  const data = await updateDriveFile(fileId, uploadState);
-  const verified = await verifyDriveUpload(fileId, uploadState);
-  state = mergeStateForDriveSave(verified, state);
-  persistStateWithoutTouchingSyncTime();
-  renderSettings();
-  renderCalendar();
-  driveMeta.fileId = fileId;
-  driveMeta.lastSync = new Date().toISOString();
-  driveMeta.lastRemoteModified = data.modifiedTime || driveMeta.lastRemoteModified || "";
-  driveMeta.lastRemoteUpdatedAt = verified.updatedAt || uploadState.updatedAt;
-  saveDriveMeta();
-  await cleanupOldDriveSnapshots(fileId);
-  const summary = recordSummary(verified);
-  lastDriveRefreshAt = Date.now();
-  setDriveStatus(`Drive 저장 확인 완료. ${summary.latestText} ${new Date().toLocaleTimeString("ko-KR")}`);
-  return summary;
-}
-
-function scheduleDriveAutoSave() {
-  if (!driveMeta.autoSync || !accessToken || isApplyingRemoteState) return;
-  clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(() => {
-    saveToDrive().catch((error) => setDriveStatus(`자동 저장 실패: ${error.message}`));
-  }, 1500);
 }
 
 function dateKey(date) {
@@ -1481,7 +1037,7 @@ function renderCalendar() {
   els.salaryQueryBtn.hidden = isJournalMode;
   els.salaryCalendarBtn.classList.toggle("active", !isJournalMode);
   els.journalCalendarBtn.classList.toggle("active", isJournalMode);
-  els.calendar.innerHTML = "";
+  const fragment = document.createDocumentFragment();
   const first = new Date(viewYear, viewMonth, 1);
   const start = new Date(viewYear, viewMonth, 1 - first.getDay());
   const payKey = adjustedPayday(viewYear, viewMonth);
@@ -1502,8 +1058,9 @@ function renderCalendar() {
       button.innerHTML = dayHtml(date, key, record, holiday, paidHoliday, isPayday, date.getDay() === 6 ? weeklyOvertimeForDate(date) : null);
       button.addEventListener("click", () => handleDayClick(date));
     }
-    els.calendar.appendChild(button);
+    fragment.appendChild(button);
   }
+  els.calendar.replaceChildren(fragment);
   if (!isJournalMode) renderSummary();
 }
 
@@ -1858,6 +1415,7 @@ function loadTesseractLibrary() {
 }
 
 async function extractReceiptText(entry, button) {
+  const startedDateKey = selectedDateKey;
   const receipt = readJournalReceipt(entry);
   const status = entry.querySelector(".journal-receipt-status");
   if (!receipt?.dataUrl) {
@@ -1877,6 +1435,7 @@ async function extractReceiptText(entry, button) {
       }
     });
     const result = await worker.recognize(receipt.dataUrl);
+    if (!entry.isConnected || startedDateKey !== selectedDateKey) return;
     const text = String(result?.data?.text || "")
       .replace(/\r/g, "")
       .replace(/[ \t]+\n/g, "\n")
@@ -1924,6 +1483,7 @@ function journalLocationError(error) {
 }
 
 async function captureJournalLocation(entry, button) {
+  const startedDateKey = selectedDateKey;
   const status = entry.querySelector(".journal-location-status");
   if (!navigator.geolocation) {
     status.textContent = "이 브라우저에서는 위치 기능을 사용할 수 없습니다.";
@@ -1940,6 +1500,7 @@ async function captureJournalLocation(entry, button) {
         maximumAge: 0
       });
     });
+    if (!entry.isConnected || startedDateKey !== selectedDateKey) return;
     const location = normalizeJournalLocation({
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
@@ -2178,18 +1739,16 @@ els.deleteDay.addEventListener("click", () => {
 });
 
 els.addJournalEntry.addEventListener("click", () => {
-  const workEntries = readJournalWorkEntries(true);
-  workEntries.push(blankJournalEntry());
-  renderJournalWorkEntries(workEntries);
+  const index = els.journalEntries.children.length;
+  els.journalEntries.insertAdjacentHTML("beforeend", journalEntryTemplate(blankJournalEntry(), index));
 });
 
 els.journalWorkTab.addEventListener("click", () => setJournalTab("work"));
 els.journalReceiptTab.addEventListener("click", () => setJournalTab("receipts"));
 
 els.addJournalExpense.addEventListener("click", () => {
-  const receipts = Array.from(els.journalExpenses.querySelectorAll(".journal-expense-entry"))
-    .map(readJournalReceipt);
-  renderJournalExpenses([...receipts, null]);
+  const index = els.journalExpenses.children.length;
+  els.journalExpenses.insertAdjacentHTML("beforeend", journalExpenseTemplate(null, index));
 });
 
 els.journalExpenses.addEventListener("change", async (event) => {
@@ -2367,7 +1926,7 @@ function renderSalaryQuery(showAll) {
   const year = Number(els.queryYear.value || viewYear);
   const month = Number(els.queryMonth.value || 0);
   const pay = payrollReceivedIn(year, month);
-  const values = Array.from({ length: 12 }, (_, i) => ({ month: i, pay: payrollReceivedIn(year, i) }));
+  const values = showAll ? Array.from({ length: 12 }, (_, i) => ({ month: i, pay: payrollReceivedIn(year, i) })) : [];
   const annualGross = values.reduce((sum, item) => sum + item.pay.gross, 0);
   const annualNet = values.reduce((sum, item) => sum + item.pay.net, 0);
   els.salaryDialog.classList.toggle("annual-mode", showAll);
@@ -2427,69 +1986,33 @@ els.exportData.addEventListener("click", () => {
   link.href = url;
   link.download = `salary-calendar-backup-${dateKey(new Date())}.json`;
   link.click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
 els.importData.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
-  const imported = JSON.parse(await file.text());
-  if (!imported.settings || !imported.days) {
-    alert("급여 달력 백업 파일이 아닙니다.");
-    return;
-  }
-  state = normalizeState(imported);
-  saveState();
-  renderSettings();
-  renderCalendar();
-  alert("가져오기가 완료됐습니다.");
-});
-
-els.driveConnect.addEventListener("click", async () => {
   try {
-    setDriveStatus("Google Drive 연결 중...");
-    await ensureDriveToken("");
-    setDriveStatus("Drive 연결 완료. 다음부터는 가능한 경우 자동으로 다시 연결합니다.");
-    if (driveMeta.autoSync) await loadFromDrive();
+    const imported = JSON.parse(await file.text());
+    const isMap = (value) => value && typeof value === "object" && !Array.isArray(value);
+    if (!isMap(imported?.settings) || !isMap(imported?.days)
+      || (imported.journals !== undefined && (!isMap(imported.journals) || !Object.values(imported.journals).every(Array.isArray)))) {
+      throw new Error("급여 달력 백업 파일이 아닙니다.");
+    }
+    const next = normalizeState(imported);
+    if (!confirm("백업 파일의 기록으로 이 기기의 기록을 교체할까요? 현재 기록은 먼저 백업 내보내기로 보관할 수 있습니다.")) return;
+    next.updatedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    state = next;
+    renderSettings();
+    renderCalendar();
+    applyLockScreen();
+    els.localSaveStatus.textContent = "백업 가져오기 완료 · 이 기기에 저장됨";
+    alert("가져오기가 완료됐습니다.");
   } catch (error) {
-    setDriveStatus(`Drive 연결 실패: ${error.message}`);
-  }
-});
-
-els.driveLoad.addEventListener("click", async () => {
-  try {
-    await ensureDriveToken("");
-    await loadFromDrive({ force: true });
-  } catch (error) {
-    setDriveStatus(`Drive 불러오기 실패: ${error.message}`);
-  }
-});
-
-els.driveSave.addEventListener("click", async () => {
-  try {
-    await ensureDriveToken("");
-    await saveToDrive();
-  } catch (error) {
-    setDriveStatus(`Drive 저장 실패: ${error.message}`);
-  }
-});
-
-els.driveAutoSync.addEventListener("change", async () => {
-  driveMeta.autoSync = els.driveAutoSync.checked;
-  saveDriveMeta();
-  updateDriveControls();
-  if (!driveMeta.autoSync) {
-    setDriveStatus("자동 동기화가 꺼졌습니다.");
-    return;
-  }
-  try {
-    await ensureDriveToken("");
-    await loadFromDrive();
-  } catch (error) {
-    driveMeta.autoSync = false;
-    saveDriveMeta();
-    updateDriveControls();
-    setDriveStatus(`자동 동기화 시작 실패: ${error.message}`);
+    alert(`가져오지 못했습니다. 기존 기록은 유지됩니다.\n${error instanceof SyntaxError ? "JSON 백업 파일인지 확인해주세요." : error.message}`);
+  } finally {
+    event.target.value = "";
   }
 });
 
@@ -2520,41 +2043,27 @@ if (els.installApp) {
   });
 }
 
-async function startDriveAutoSync() {
-  if (!driveMeta.autoSync) return;
-  if (!accessToken) {
-    setDriveStatus("자동 동기화가 켜져 있습니다. 토큰이 만료되면 Google Drive 연결을 한 번 눌러주세요.");
-    return;
-  }
-  try {
-    setDriveStatus("자동 동기화 중: Drive에서 최신 데이터를 확인합니다...");
-    await loadFromDrive({ silent: true });
-  } catch (error) {
-    setDriveStatus(`자동 동기화 실패: ${error.message}`);
+let midnightTimer;
+function refreshCurrentDate() {
+  const now = new Date();
+  const changed = dateKey(now) !== dateKey(today);
+  today = now;
+  if (changed) renderCalendar();
+  clearTimeout(midnightTimer);
+  if (!document.hidden) {
+    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    midnightTimer = setTimeout(refreshCurrentDate, midnight - now + 100);
   }
 }
-
-function refreshDriveWhenActive() {
-  if (!driveMeta.autoSync || !accessToken || document.hidden) return;
-  if (Date.now() - lastDriveRefreshAt < 15000) return;
-  lastDriveRefreshAt = Date.now();
-  loadFromDrive({ silent: true }).catch((error) => {
-    setDriveStatus(`자동 동기화 실패: ${error.message}`);
-  });
-}
-
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshDriveWhenActive();
-});
-window.addEventListener("focus", refreshDriveWhenActive);
-setInterval(refreshDriveWhenActive, 60000);
+document.addEventListener("visibilitychange", refreshCurrentDate);
+window.addEventListener("focus", refreshCurrentDate);
 
 if ("serviceWorker" in navigator) {
   let refreshedByNewWorker = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (refreshedByNewWorker) return;
     refreshedByNewWorker = true;
-    location.reload();
+    if (!document.querySelector("dialog[open]") && !els.settingsPanel.classList.contains("open")) location.reload();
   });
   navigator.serviceWorker.register("./service-worker.js")
     .then((registration) => registration.update())
@@ -2563,10 +2072,8 @@ if ("serviceWorker" in navigator) {
 
 applyCurrentWageCorrection();
 apply2026DeductionSettings();
-persistStateWithoutTouchingSyncTime();
 if (els.appVersion) els.appVersion.textContent = `앱 버전 ${APP_VERSION}`;
-updateDriveControls();
 renderSettings();
 renderCalendar();
 applyLockScreen();
-startDriveAutoSync();
+refreshCurrentDate();
