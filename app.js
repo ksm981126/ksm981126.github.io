@@ -3,7 +3,7 @@ const OLD_KEYS = ["salary-calendar-v3", "salary-calendar-v2", "salary-calendar-v
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v44";
+const APP_VERSION = "sync-v45";
 const RECEIPT_IMAGE_TARGET_CHARS = 220000;
 const RECEIPT_IMAGE_MAX_CHARS = 350000;
 const RECEIPT_TOTAL_MAX_CHARS = 3800000;
@@ -656,21 +656,20 @@ function weeklyOvertimeOnDay(key, record) {
 
 function workPayBreakdown(record, key) {
   if (!record?.worked) {
-    return { total: 0, hours: 0, regularHours: 0, basicPay: 0, overtime: 0, night: 0, overtimePay: 0, nightExtra: 0 };
+    return { total: 0, hours: 0, regularHours: 0, basicPay: 0, overtime: 0, night: 0, overtimePay: 0, nightExtra: 0, holidayExtra: 0, holidayHours: 0 };
   }
   const hours = workHours(record);
   const wage = Number(record.wage || 0);
   const over5 = state.settings.businessSize === "over5";
   const dailyOvertime = Math.max(0, hours - 8);
-  const overtime = dailyOvertime + weeklyOvertimeOnDay(key, record);
+  const holidayWork = record.type === "holiday" || isHoliday(dateFromKey(key)) || dateFromKey(key).getDay() === 0;
+  const overtime = holidayWork ? 0 : dailyOvertime + weeklyOvertimeOnDay(key, record);
   const regularHours = Math.max(0, hours - overtime);
   const night = nightHours(record);
-  const date = dateFromKey(key);
-  const holidayWork = record.type === "holiday" || isHoliday(date) || date.getDay() === 0;
   const base = hours * wage;
   const overtimeExtra = over5 ? overtime * wage * 0.5 : 0;
   const nightExtra = over5 ? night * wage * 0.5 : 0;
-  const holidayExtra = over5 && holidayWork ? hours * wage * 0.5 : 0;
+  const holidayExtra = over5 && holidayWork ? (Math.min(8, hours) * 0.5 + dailyOvertime) * wage : 0;
   return {
     total: Math.round(base + overtimeExtra + nightExtra + holidayExtra),
     hours,
@@ -679,7 +678,9 @@ function workPayBreakdown(record, key) {
     overtime,
     night,
     overtimePay: Math.round(overtime * wage + overtimeExtra),
-    nightExtra: Math.round(nightExtra)
+    nightExtra: Math.round(nightExtra),
+    holidayExtra: Math.round(holidayExtra),
+    holidayHours: holidayWork ? hours : 0
   };
 }
 
@@ -757,7 +758,7 @@ function paidHolidayAllowanceForMonth(year, month) {
   return monthKeys(year, month).reduce((sum, key) => {
     const date = dateFromKey(key);
     if (!isPaidAttendanceHoliday(date) || !isEmployedOn(date)) return sum;
-    return sum + paidDayHours() * Number(state.settings.hourlyWage || 0);
+    return sum + paidDayHours() * Number(state.days[key]?.wage || state.settings.hourlyWage || 0);
   }, 0);
 }
 
@@ -781,8 +782,10 @@ function payrollForWorkMonth(year, month) {
     totals.nightHours += pay.night;
     totals.overtimePay += pay.overtimePay;
     totals.nightExtra += pay.nightExtra;
+    totals.holidayExtra += pay.holidayExtra;
+    totals.holidayHours += pay.holidayHours;
     return totals;
-  }, { totalHours: 0, regularHours: 0, basicPay: 0, overtimeHours: 0, nightHours: 0, overtimePay: 0, nightExtra: 0 });
+  }, { totalHours: 0, regularHours: 0, basicPay: 0, overtimeHours: 0, nightHours: 0, overtimePay: 0, nightExtra: 0, holidayExtra: 0, holidayHours: 0 });
   const roundedOvertimePay = roundToTen(premiumTotals.overtimePay);
   const workPay = rawWorkPay + roundedOvertimePay - premiumTotals.overtimePay;
   premiumTotals.overtimePay = roundedOvertimePay;
@@ -1548,6 +1551,7 @@ function renderSummary() {
       ${moneyItem(`야간가산 ${pay.nightHours.toFixed(1)}h`, pay.nightExtra, "earning")}
       ${moneyItem(`주휴 ${pay.weeklyHours.toFixed(1)}h`, pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
+      ${moneyItem(`휴일근로 가산 ${pay.holidayHours.toFixed(1)}h`, pay.holidayExtra, "earning")}
       ${moneyItem("대체공휴일", pay.substituteHoliday)}
       ${moneyItem("휴가", pay.vacation)}
     </div>
@@ -1587,6 +1591,11 @@ function updateDayCalcPreview() {
   const hours = workHours(previewRecord);
   const pay = workPayBreakdown(previewRecord, selectedDateKey || dateKey(today));
   els.dayCalcPreview.textContent = `근로 ${hours.toFixed(1)}시간 · 연장 ${pay.overtime.toFixed(1)}시간 ${fmtMoney.format(pay.overtimePay)} · 야간가산 ${pay.night.toFixed(1)}시간 +${fmtMoney.format(pay.nightExtra)}`;
+  const key = selectedDateKey || dateKey(today);
+  if (pay.holidayHours) {
+    const paid = isPaidAttendanceHoliday(dateFromKey(key)) && isEmployedOn(dateFromKey(key)) ? paidDayHours() * wage : 0;
+    els.dayCalcPreview.textContent += ` · 유급휴일 ${fmtMoney.format(paid)} · 휴일근로 ${fmtMoney.format(pay.total - pay.nightExtra)} (가산 ${fmtMoney.format(pay.holidayExtra)} 포함) · 합계 ${fmtMoney.format(paid + pay.total)}`;
+  }
 }
 
 function handleDayClick(date) {
@@ -1962,6 +1971,7 @@ function renderSalaryQuery(showAll) {
       ${moneyItem("근무", pay.workPay)}
       ${moneyItem(`주휴 ${pay.weeklyHours.toFixed(1)}h`, pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
+      ${moneyItem(`휴일근로 가산 ${pay.holidayHours.toFixed(1)}h`, pay.holidayExtra)}
       ${moneyItem("대체공휴일", pay.substituteHoliday)}
       ${moneyItem("휴가", pay.vacation)}
       ${moneyItem("공제", pay.deductions.total)}

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=pwa-sync-v44">
+  <link rel="stylesheet" href="styles.css?v=pwa-sync-v45">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -155,6 +155,7 @@
     <form method="dialog">
       <div class="dialog-head"><h2>업데이트 내역</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
       <div class="update-notes-list">
+        <section><strong>sync-v45</strong><time>2026.09.30</time><p>유급휴일수당과 휴일근로 가산액을 구분해 표시하고 날짜별 시급을 반영했습니다. 휴일근로 8시간 초과 가산 및 주간 연장가산 중복을 바로잡았습니다.</p></section>
         <section><strong>sync-v44</strong><time>2026.09.16</time><p>Drive 연동을 제거하고 기기 내 저장·파일 백업 중심으로 정리했습니다. 월별 조회 계산, 날짜 갱신, 캐시와 백업 오류 처리를 개선했습니다.</p></section>
         <section><strong>sync-v43</strong><time>2026.09.08</time><p>업무일지를 현장 기록·영수증 탭으로 분리하고 현장 추가가 되지 않던 문제를 수정했습니다.</p></section>
         <section><strong>sync-v42</strong><time>2026.09.07</time><p>영수증 증빙을 현장별 입력에서 분리해 하루 업무일지 마지막의 지출 항목으로 이동했습니다.</p></section>
@@ -178,7 +179,7 @@
     </form>
   </dialog>
 
-  <script src="tax-table-2026.js?v=pwa-sync-v44"></script>
-  <script src="app.js?v=pwa-sync-v44"></script>
+  <script src="tax-table-2026.js?v=pwa-sync-v45"></script>
+  <script src="app.js?v=pwa-sync-v45"></script>
 </body>
 </html>
