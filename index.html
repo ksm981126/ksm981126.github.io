@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f766e">
   <title>급여 달력</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css?v=pwa-sync-v45">
+  <link rel="stylesheet" href="styles.css?v=pwa-sync-v46">
   <script>window.addEventListener("unhandledrejection",e=>{if(String(e.reason).includes("ServiceWorker"))e.preventDefault()})</script>
 </head>
 <body>
@@ -21,7 +21,10 @@
       </div>
 
       <form id="settingsForm" class="settings-form">
-        <label>시급<input type="number" id="hourlyWage" min="0" step="10" inputmode="numeric"></label>
+        <label>계약 이전 시급<input type="number" id="hourlyWage" min="0" step="10" inputmode="numeric"></label>
+        <label>새 계약 적용일<input type="date" id="contractStart" required></label>
+        <label>새 계약 시급<input type="number" id="contractWage" min="0" step="10" inputmode="numeric" required></label>
+        <label>월 고정 연장시간<input type="number" id="fixedOvertimeHours" min="0" step="0.5" inputmode="decimal"></label>
         <div class="two">
           <label>기본 출근<input type="time" id="defaultStart"></label>
           <label>기본 퇴근<input type="time" id="defaultEnd"></label>
@@ -155,6 +158,7 @@
     <form method="dialog">
       <div class="dialog-head"><h2>업데이트 내역</h2><button class="icon-btn" value="cancel" aria-label="닫기">×</button></div>
       <div class="update-notes-list">
+        <section><strong>sync-v46</strong><time>2026.10.01</time><p>10월 계약 시급 12,000원·고정 연장 22시간을 반영했습니다. 토요일 연장과 공휴일 근로는 별도 계산하며 이전 기록의 시급은 보존합니다.</p></section>
         <section><strong>sync-v45</strong><time>2026.09.30</time><p>유급휴일수당과 휴일근로 가산액을 구분해 표시하고 날짜별 시급을 반영했습니다. 휴일근로 8시간 초과 가산 및 주간 연장가산 중복을 바로잡았습니다.</p></section>
         <section><strong>sync-v44</strong><time>2026.09.16</time><p>Drive 연동을 제거하고 기기 내 저장·파일 백업 중심으로 정리했습니다. 월별 조회 계산, 날짜 갱신, 캐시와 백업 오류 처리를 개선했습니다.</p></section>
         <section><strong>sync-v43</strong><time>2026.09.08</time><p>업무일지를 현장 기록·영수증 탭으로 분리하고 현장 추가가 되지 않던 문제를 수정했습니다.</p></section>
@@ -179,7 +183,7 @@
     </form>
   </dialog>
 
-  <script src="tax-table-2026.js?v=pwa-sync-v45"></script>
-  <script src="app.js?v=pwa-sync-v45"></script>
+  <script src="tax-table-2026.js?v=pwa-sync-v46"></script>
+  <script src="app.js?v=pwa-sync-v46"></script>
 </body>
 </html>

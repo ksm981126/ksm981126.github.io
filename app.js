@@ -3,7 +3,7 @@ const OLD_KEYS = ["salary-calendar-v3", "salary-calendar-v2", "salary-calendar-v
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v45";
+const APP_VERSION = "sync-v46";
 const RECEIPT_IMAGE_TARGET_CHARS = 220000;
 const RECEIPT_IMAGE_MAX_CHARS = 350000;
 const RECEIPT_TOTAL_MAX_CHARS = 3800000;
@@ -27,6 +27,9 @@ const els = {
   closeSettings: document.querySelector("#closeSettings"),
   form: document.querySelector("#settingsForm"),
   hourlyWage: document.querySelector("#hourlyWage"),
+  contractStart: document.querySelector("#contractStart"),
+  contractWage: document.querySelector("#contractWage"),
+  fixedOvertimeHours: document.querySelector("#fixedOvertimeHours"),
   defaultStart: document.querySelector("#defaultStart"),
   defaultEnd: document.querySelector("#defaultEnd"),
   breakHours: document.querySelector("#breakHours"),
@@ -203,6 +206,9 @@ function defaultState() {
     updatedAt: "",
     settings: {
       hourlyWage: 10350,
+      contractStart: "2026-10-01",
+      contractWage: 12000,
+      fixedOvertimeHours: 22,
       defaultStart: "09:00",
       defaultEnd: "18:00",
       breakHours: 1,
@@ -254,6 +260,7 @@ function normalizeState(raw) {
   const days = {};
   Object.entries(raw?.days || {}).forEach(([key, record]) => {
     days[key] = normalizeRecord(record, settings);
+    if (!raw?.settings?.contractStart && key >= settings.contractStart && Number(days[key].wage) === 10350) days[key].wage = settings.contractWage;
   });
   const journals = {};
   Object.entries(raw?.journals || {}).forEach(([key, entries]) => {
@@ -635,12 +642,16 @@ function previousMonth(year, month) {
 function baseWorkRecord(date) {
   return {
     worked: true,
-    wage: Number(state.settings.hourlyWage),
+    wage: wageForDate(dateKey(date)),
     start: state.settings.defaultStart,
     end: state.settings.defaultEnd,
     breakHours: Number(state.settings.breakHours),
     type: isHoliday(date) || date.getDay() === 0 ? "holiday" : "normal"
   };
+}
+
+function wageForDate(key) {
+  return Number(key >= state.settings.contractStart ? state.settings.contractWage : state.settings.hourlyWage);
 }
 
 function weeklyOvertimeOnDay(key, record) {
@@ -738,7 +749,7 @@ function weeklyAllowanceForMonth(year, month) {
       }
       if (record?.worked) {
         const statutoryHours = Math.min(paidDayHours(), workHours(record));
-        wageHours += statutoryHours * Number(record.wage || state.settings.hourlyWage || 0);
+        wageHours += statutoryHours * Number(record.wage || wageForDate(key) || 0);
         workedHours += statutoryHours;
       }
     }
@@ -746,7 +757,7 @@ function weeklyAllowanceForMonth(year, month) {
     const contractedWeeklyHours = paidDayHours() * 5;
     if (!attendedAll || contractedWeeklyHours < 15) return;
     const allowanceHours = Math.min(8, contractedWeeklyHours / 5);
-    const wage = workedHours ? wageHours / workedHours : Number(state.settings.hourlyWage || 0);
+    const wage = workedHours ? wageHours / workedHours : wageForDate(sundayKey);
     hours += allowanceHours;
     pay += allowanceHours * wage;
   });
@@ -758,16 +769,16 @@ function paidHolidayAllowanceForMonth(year, month) {
   return monthKeys(year, month).reduce((sum, key) => {
     const date = dateFromKey(key);
     if (!isPaidAttendanceHoliday(date) || !isEmployedOn(date)) return sum;
-    return sum + paidDayHours() * Number(state.days[key]?.wage || state.settings.hourlyWage || 0);
+    return sum + paidDayHours() * Number(state.days[key]?.wage || wageForDate(key) || 0);
   }, 0);
 }
 
 function vacationPayForMonth(year, month) {
-  return monthVacationRecords(year, month).reduce((sum, [, record]) => sum + paidDayHours() * Number(record.wage || state.settings.hourlyWage || 0), 0);
+  return monthVacationRecords(year, month).reduce((sum, [key, record]) => sum + paidDayHours() * Number(record.wage || wageForDate(key) || 0), 0);
 }
 
 function substituteHolidayPayForMonth(year, month) {
-  return monthSubstituteHolidayRecords(year, month).reduce((sum, [, record]) => sum + paidDayHours() * Number(record.wage || state.settings.hourlyWage || 0), 0);
+  return monthSubstituteHolidayRecords(year, month).reduce((sum, [key, record]) => sum + paidDayHours() * Number(record.wage || wageForDate(key) || 0), 0);
 }
 
 function payrollForWorkMonth(year, month) {
@@ -787,8 +798,19 @@ function payrollForWorkMonth(year, month) {
     return totals;
   }, { totalHours: 0, regularHours: 0, basicPay: 0, overtimeHours: 0, nightHours: 0, overtimePay: 0, nightExtra: 0, holidayExtra: 0, holidayHours: 0 });
   const roundedOvertimePay = roundToTen(premiumTotals.overtimePay);
-  const workPay = rawWorkPay + roundedOvertimePay - premiumTotals.overtimePay;
+  let workPay = rawWorkPay + roundedOvertimePay - premiumTotals.overtimePay;
   premiumTotals.overtimePay = roundedOvertimePay;
+  const contractActive = monthKeys(year, month)[0] >= state.settings.contractStart;
+  const fixedOvertimeHours = contractActive ? Math.max(0, Number(state.settings.fixedOvertimeHours || 0)) : 0;
+  const fixedOvertimePay = roundToTen(fixedOvertimeHours * Number(state.settings.contractWage) * (state.settings.businessSize === "over5" ? 1.5 : 1));
+  const coveredOvertimePay = records.reduce((sum, [key, record]) => {
+    const date = dateFromKey(key);
+    if (!contractActive || date.getDay() === 0 || date.getDay() === 6 || isHoliday(date) || record.type === "holiday") return sum;
+    return sum + workPayBreakdown(record, key).overtimePay;
+  }, 0);
+  const fixedTopUp = Math.max(0, fixedOvertimePay - roundToTen(coveredOvertimePay));
+  workPay += fixedTopUp;
+  const additionalOvertimePay = Math.max(0, premiumTotals.overtimePay - Math.min(fixedOvertimePay, roundToTen(coveredOvertimePay)));
   const weeklyAllowance = weeklyAllowanceForMonth(year, month);
   const weekly = weeklyAllowance.pay;
   const paidHoliday = Math.round(paidHolidayAllowanceForMonth(year, month));
@@ -799,6 +821,9 @@ function payrollForWorkMonth(year, month) {
   const baseLikePay = premiumTotals.basicPay + weekly + paidHoliday + vacation + substituteHoliday;
   return {
     workPay,
+    fixedOvertimeHours,
+    fixedOvertimePay,
+    additionalOvertimePay,
     ...premiumTotals,
     weekly,
     weeklyHours: weeklyAllowance.hours,
@@ -1017,6 +1042,9 @@ function showLegalWorkAlert(key, record) {
 
 function renderSettings() {
   els.hourlyWage.value = state.settings.hourlyWage;
+  els.contractStart.value = state.settings.contractStart;
+  els.contractWage.value = state.settings.contractWage;
+  els.fixedOvertimeHours.value = state.settings.fixedOvertimeHours;
   els.defaultStart.value = state.settings.defaultStart;
   els.defaultEnd.value = state.settings.defaultEnd;
   els.breakHours.value = state.settings.breakHours;
@@ -1547,7 +1575,8 @@ function renderSummary() {
       ${moneyItem("고용보험", pay.deductions.employment)}
       ${moneyItem("소득세", pay.deductions.incomeTax)}
       ${moneyItem("지방소득세", pay.deductions.localTax)}
-      ${moneyItem(`연장근로 ${pay.overtimeHours.toFixed(1)}h`, pay.overtimePay, "earning")}
+      ${moneyItem(`고정연장 ${pay.fixedOvertimeHours.toFixed(1)}h`, pay.fixedOvertimePay, "earning")}
+      ${moneyItem(`추가연장 (실제 ${pay.overtimeHours.toFixed(1)}h)`, pay.additionalOvertimePay, "earning")}
       ${moneyItem(`야간가산 ${pay.nightHours.toFixed(1)}h`, pay.nightExtra, "earning")}
       ${moneyItem(`주휴 ${pay.weeklyHours.toFixed(1)}h`, pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
@@ -1645,6 +1674,9 @@ els.form.addEventListener("submit", (event) => {
   state.settings = {
     ...state.settings,
     hourlyWage: Number(els.hourlyWage.value || 0),
+    contractStart: els.contractStart.value || "2026-10-01",
+    contractWage: Number(els.contractWage.value || 0),
+    fixedOvertimeHours: Math.max(0, Number(els.fixedOvertimeHours.value || 0)),
     defaultStart: els.defaultStart.value || "09:00",
     defaultEnd: els.defaultEnd.value || "18:00",
     breakHours: Number(els.breakHours.value || 0),
@@ -1969,6 +2001,8 @@ function renderSalaryQuery(showAll) {
       ${moneyItem("실근로 기본급", pay.basicPay)}
       ${moneyItem("기본급성 합계", pay.baseLikePay)}
       ${moneyItem("근무", pay.workPay)}
+      ${moneyItem(`고정연장 ${pay.fixedOvertimeHours.toFixed(1)}h`, pay.fixedOvertimePay)}
+      ${moneyItem("추가연장", pay.additionalOvertimePay)}
       ${moneyItem(`주휴 ${pay.weeklyHours.toFixed(1)}h`, pay.weekly)}
       ${moneyItem("유급휴일", pay.paidHoliday)}
       ${moneyItem(`휴일근로 가산 ${pay.holidayHours.toFixed(1)}h`, pay.holidayExtra)}
