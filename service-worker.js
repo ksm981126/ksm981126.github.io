@@ -1,14 +1,16 @@
-const CACHE_NAME = "salary-calendar-offline-v51";
+const CACHE_NAME = "salary-calendar-offline-v52";
 const CACHE_PREFIX = "salary-calendar-offline-";
 const FILES = [
   "./index.html",
-  "./styles.css?v=pwa-sync-v46",
-  "./tax-table-2026.js?v=pwa-sync-v46",
-  "./app.js?v=pwa-sync-v46",
+  "./styles.css?v=pwa-sync-v47",
+  "./workspace-ui.css?v=pwa-sync-v47",
+  "./tax-table-2026.js?v=pwa-sync-v47",
+  "./app.js?v=pwa-sync-v47",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-192.png",
-  "./icon-512.png"
+  "./icon-512.png",
+  ...["settings", "chevron-left", "chevron-right", "calendar-days", "notebook-pen", "chart-no-axes-column", "chevron-down", "list", "plus", "clock", "copy"].map(name => `./icons/${name}.svg`)
 ];
 
 self.addEventListener("install", (event) => {

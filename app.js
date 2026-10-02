@@ -3,7 +3,7 @@ const OLD_KEYS = ["salary-calendar-v3", "salary-calendar-v2", "salary-calendar-v
 const LOCK_AUTH_KEY = "salary-calendar-password-auth";
 const WAGE_CORRECTION_KEY = "salary-calendar-wage-10350-v1";
 const DEDUCTION_2026_MIGRATION_KEY = "salary-calendar-deduction-2026-v1";
-const APP_VERSION = "sync-v46";
+const APP_VERSION = "sync-v47";
 const RECEIPT_IMAGE_TARGET_CHARS = 220000;
 const RECEIPT_IMAGE_MAX_CHARS = 350000;
 const RECEIPT_TOTAL_MAX_CHARS = 3800000;
@@ -17,6 +17,7 @@ let viewYear = today.getFullYear();
 let viewMonth = today.getMonth();
 let selectedDateKey = "";
 let appMode = "salary";
+let calendarLayout = localStorage.getItem("salary-calendar-layout") === "list" ? "list" : "calendar";
 let installPromptEvent = null;
 let tesseractLibraryPromise = null;
 
@@ -72,9 +73,22 @@ const els = {
   deleteDay: document.querySelector("#deleteDay"),
   exportData: document.querySelector("#exportData"),
   localSaveStatus: document.querySelector("#localSaveStatus"),
+  footerSaveStatus: document.querySelector("#footerSaveStatus"),
   importData: document.querySelector("#importData"),
   installApp: document.querySelector("#installApp"),
   appVersion: document.querySelector("#appVersion"),
+  payDetails: document.querySelector("#payDetails"),
+  payPeriod: document.querySelector("#payPeriod"),
+  deductionTotal: document.querySelector("#deductionTotal"),
+  activityStrip: document.querySelector("#activityStrip"),
+  recordList: document.querySelector("#recordList"),
+  calendarView: document.querySelector("#calendarView"),
+  listView: document.querySelector("#listView"),
+  recordToday: document.querySelector("#recordToday"),
+  navSettings: document.querySelector("#navSettings"),
+  defaultShift: document.querySelector("#defaultShift"),
+  recentShift: document.querySelector("#recentShift"),
+  presetStatus: document.querySelector("#presetStatus"),
   salaryDialog: document.querySelector("#salaryDialog"),
   queryYear: document.querySelector("#queryYear"),
   queryMonth: document.querySelector("#queryMonth"),
@@ -423,8 +437,10 @@ function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     els.localSaveStatus.textContent = `이 기기에 저장됨 · ${new Date().toLocaleTimeString("ko-KR")}`;
+    els.footerSaveStatus.textContent = "이 기기에 저장됨";
   } catch (error) {
     els.localSaveStatus.textContent = "저장 실패 · 백업 내보내기로 기록을 보관해주세요.";
+    els.footerSaveStatus.textContent = "저장 실패 · 백업 필요";
     alert("기기에 저장하지 못했습니다. 저장 공간을 확인하고, 창을 닫기 전에 백업 내보내기로 기록을 보관해주세요.");
     throw error;
   }
@@ -1062,17 +1078,21 @@ function renderSettings() {
 
 function renderCalendar() {
   const isJournalMode = appMode === "journal";
-  els.monthLabel.textContent = `${viewYear}년 ${viewMonth + 1}월${isJournalMode ? " 업무일지" : ""}`;
+  els.monthLabel.textContent = `${viewYear}년 ${viewMonth + 1}월`;
   els.summaryPanel.hidden = isJournalMode;
+  els.payDetails.hidden = isJournalMode;
   els.deductionBreakdown.hidden = isJournalMode;
-  els.salaryQueryBtn.hidden = isJournalMode;
   els.salaryCalendarBtn.classList.toggle("active", !isJournalMode);
   els.journalCalendarBtn.classList.toggle("active", isJournalMode);
+  els.salaryCalendarBtn.setAttribute("aria-current", !isJournalMode ? "page" : "false");
+  els.journalCalendarBtn.setAttribute("aria-current", isJournalMode ? "page" : "false");
+  document.body.classList.toggle("journal-mode", isJournalMode);
   const fragment = document.createDocumentFragment();
   const first = new Date(viewYear, viewMonth, 1);
   const start = new Date(viewYear, viewMonth, 1 - first.getDay());
   const payKey = adjustedPayday(viewYear, viewMonth);
-  for (let i = 0; i < 42; i += 1) {
+  const cellCount = Math.ceil((first.getDay() + new Date(viewYear, viewMonth + 1, 0).getDate()) / 7) * 7;
+  for (let i = 0; i < cellCount; i += 1) {
     const date = addDays(start, i);
     const key = dateKey(date);
     const holiday = holidayInfo(date);
@@ -1080,6 +1100,9 @@ function renderCalendar() {
     const isPayday = key === payKey;
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.date = key;
+    button.setAttribute("aria-label", `${key}${holiday ? ` ${holiday.name}` : ""}${isJournalMode ? " 업무일지" : " 근무 기록"}`);
+    if (key === dateKey(today)) button.setAttribute("aria-current", "date");
     button.className = ["day", isJournalMode ? "journal-day" : "", dateKey(date) === dateKey(today) ? "today" : "", date.getMonth() !== viewMonth ? "muted" : "", date.getDay() === 0 ? "sun" : "", date.getDay() === 6 ? "sat" : "", holiday ? "holiday" : ""].filter(Boolean).join(" ");
     if (isJournalMode) {
       button.innerHTML = journalDayHtml(date, key, state.journals[key] || [], holiday);
@@ -1093,6 +1116,61 @@ function renderCalendar() {
   }
   els.calendar.replaceChildren(fragment);
   if (!isJournalMode) renderSummary();
+  renderRecordOverview();
+}
+
+function renderRecordOverview() {
+  const journal = appMode === "journal";
+  const keys = monthKeys(viewYear, viewMonth);
+  const records = monthRecords(viewYear, viewMonth);
+  const hours = records.reduce((sum, [, record]) => sum + workHours(record), 0);
+  const overtime = records.reduce((sum, [key, record]) => sum + workPayBreakdown(record, key).overtime, 0);
+  const entries = keys.flatMap(key => journalWorkEntries(state.journals[key] || []));
+  const expenses = keys.flatMap(key => journalExpenseReceipts(state.journals[key] || []));
+  els.activityStrip.innerHTML = journal
+    ? `<div><span>${viewMonth + 1}월 업무</span><strong>${entries.length}<small>건</small></strong></div><div><span>기록한 날</span><strong>${keys.filter(key => state.journals[key]?.length).length}<small>일</small></strong></div><div><span>지출 합계</span><strong>${fmtMoney.format(expenses.reduce((sum, item) => sum + Number(item.amount || 0), 0))}</strong></div>`
+    : `<div><span>${viewMonth + 1}월 출근</span><strong>${records.length}<small>일</small></strong></div><div><span>실제 근무</span><strong>${hours.toFixed(1)}<small>시간</small></strong></div><div><span>실제 연장</span><strong>${overtime.toFixed(1)}<small>시간</small></strong></div>`;
+  els.calendar.closest(".calendar-wrap").hidden = calendarLayout === "list";
+  els.recordList.hidden = calendarLayout !== "list";
+  for (const [button, mode] of [[els.calendarView, "calendar"], [els.listView, "list"]]) {
+    button.classList.toggle("active", calendarLayout === mode);
+    button.setAttribute("aria-pressed", String(calendarLayout === mode));
+  }
+  els.recordToday.querySelector("span").textContent = journal ? "오늘 일지" : "오늘 기록";
+  const fragment = document.createDocumentFragment();
+  keys.forEach(key => {
+    const record = state.days[key];
+    const date = dateFromKey(key);
+    const holiday = holidayInfo(date);
+    const sites = journalWorkEntries(state.journals[key] || []);
+    const receipts = journalExpenseReceipts(state.journals[key] || []);
+    if (!(journal ? sites.length || receipts.length : record) && !holiday && key !== dateKey(today)) return;
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `record-row${key === dateKey(today) ? " is-today" : ""}${holiday || date.getDay() === 0 ? " is-holiday" : ""}`;
+    row.dataset.date = key;
+    let title, detail, value;
+    if (journal) {
+      title = sites.map(site => site.office ? "사무실" : site.siteName || "현장").join(" · ") || (receipts.length ? "지출 기록" : holiday?.name || "일지 미작성");
+      detail = [...new Set(sites.flatMap(site => site.tasks || []))].join(" · ") || (receipts.length ? `영수증 ${receipts.length}건` : "");
+      value = receipts.length ? fmtMoney.format(receipts.reduce((sum, item) => sum + Number(item.amount || 0), 0)) : sites.length ? `${sites.length}건` : "";
+    } else {
+      const pay = workPayBreakdown(record, key);
+      title = record?.worked ? `${record.start} – ${record.end}` : record?.type === "vacation" ? "휴가" : record?.type === "substituteHoliday" ? "대체 공휴일" : holiday?.name || "근무 미기록";
+      detail = [record?.worked ? `휴게 ${record.breakHours}h` : "", pay.overtime ? `연장 ${pay.overtime.toFixed(1)}h` : "", pay.night ? `야간 ${pay.night.toFixed(1)}h` : "", record?.worked && holiday ? holiday.name : ""].filter(Boolean).join(" · ");
+      value = record?.worked ? `${pay.hours.toFixed(1)}h` : "";
+    }
+    row.innerHTML = `<span class="record-date"><strong>${date.getDate()}</strong><small>${["일", "월", "화", "수", "목", "금", "토"][date.getDay()]}</small></span><span class="record-description"><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail)}</small></span><span class="record-value">${escapeHtml(value)}</span><img src="icons/chevron-right.svg" alt="">`;
+    row.addEventListener("click", () => journal ? handleJournalDayClick(date) : handleDayClick(date));
+    fragment.appendChild(row);
+  });
+  if (!fragment.childElementCount) {
+    const empty = document.createElement("p");
+    empty.className = "empty-records";
+    empty.textContent = "아직 기록이 없습니다.";
+    fragment.appendChild(empty);
+  }
+  els.recordList.replaceChildren(fragment);
 }
 
 function dayHtml(date, key, record, holiday, paidHoliday, isPayday, weeklyOvertime) {
@@ -1553,11 +1631,13 @@ function renderSummary() {
   const workLabel = `${pay.period.year}년 ${pay.period.month + 1}월 근무분`;
   const worked = monthRecords(pay.period.year, pay.period.month).length;
   const vacations = monthVacationRecords(pay.period.year, pay.period.month).length;
-  els.grossLabel.textContent = `이번 달 지급 세전 (${workLabel})`;
-  els.netLabel.textContent = `이번 달 지급 세후 (${workLabel})`;
+  els.grossLabel.textContent = "지급 세전";
+  els.netLabel.textContent = `${viewMonth + 1}월 예상 실수령액`;
+  els.payPeriod.textContent = `${workLabel} · ${Number(pay.payday.slice(5, 7))}/${Number(pay.payday.slice(8))} 지급`;
+  els.deductionTotal.textContent = `공제 ${fmtMoney.format(pay.deductions.total)}`;
   els.grossPay.textContent = fmtMoney.format(pay.gross);
   els.netPay.textContent = fmtMoney.format(pay.net);
-  els.workedDays.textContent = `${worked}일 / 휴가 ${vacations}일`;
+  els.workedDays.textContent = `${worked}일 · 휴가 ${vacations}일`;
   els.leaveDays.textContent = `${remainingLeave(today)}일`;
   els.deductionBreakdown.innerHTML = `
     <div class="info-strip">
@@ -1631,8 +1711,11 @@ function handleDayClick(date) {
   const key = dateKey(date);
   const existing = state.days[key] || null;
   selectedDateKey = key;
+  els.presetStatus.textContent = "";
+  els.recentShift.disabled = !recentWorkRecord(key);
   const record = existing || baseWorkRecord(date);
   els.dialogDate.textContent = `${key} 기록`;
+  els.deleteDay.hidden = !existing;
   els.dayWage.value = record.wage || state.settings.hourlyWage;
   els.dayStart.value = record.start || state.settings.defaultStart;
   els.dayEnd.value = record.end || state.settings.defaultEnd;
@@ -1640,6 +1723,19 @@ function handleDayClick(date) {
   els.dayType.value = record.type === "substituteHoliday" ? "substituteHoliday" : record.type === "holiday" || isHoliday(date) ? "holiday" : "normal";
   updateDayCalcPreview();
   els.dialog.showModal();
+}
+
+function recentWorkRecord(key) {
+  const prior = Object.keys(state.days).filter(day => day < key && state.days[day]?.worked).sort().pop();
+  return prior ? { key: prior, record: state.days[prior] } : null;
+}
+
+function applyShiftTimes(record, label) {
+  els.dayStart.value = record.start;
+  els.dayEnd.value = record.end;
+  els.dayBreak.value = record.breakHours;
+  els.presetStatus.textContent = label;
+  updateDayCalcPreview();
 }
 
 function handleJournalDayClick(date) {
@@ -1735,6 +1831,7 @@ lockEls.lockNow.addEventListener("click", () => {
 
 els.dayForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (event.submitter?.value === "cancel") { els.dialog.close(); return; }
   const record = recordFromDialog();
   if (record.type === "vacation") {
     if (!isEmployedOn(dateFromKey(selectedDateKey))) {
@@ -1867,6 +1964,7 @@ els.journalExpenses.addEventListener("click", async (event) => {
 
 els.journalForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (event.submitter?.value === "cancel") { els.journalDialog.close(); return; }
   persistOpenJournalForm();
   els.journalDialog.close();
 });
@@ -1903,6 +2001,24 @@ els.todayBtn.addEventListener("click", () => {
   viewYear = today.getFullYear();
   viewMonth = today.getMonth();
   renderCalendar();
+});
+
+els.calendarView.addEventListener("click", () => changeCalendarLayout("calendar"));
+els.listView.addEventListener("click", () => changeCalendarLayout("list"));
+function changeCalendarLayout(mode) {
+  calendarLayout = mode;
+  try { localStorage.setItem("salary-calendar-layout", mode); } catch { /* Viewing works without persisted preferences. */ }
+  renderRecordOverview();
+}
+els.recordToday.addEventListener("click", () => {
+  els.todayBtn.click();
+  if (appMode === "journal") handleJournalDayClick(today);
+  else handleDayClick(today);
+});
+els.defaultShift.addEventListener("click", () => applyShiftTimes(baseWorkRecord(dateFromKey(selectedDateKey)), "기본 근무시간 적용"));
+els.recentShift.addEventListener("click", () => {
+  const recent = recentWorkRecord(selectedDateKey);
+  if (recent) applyShiftTimes(recent.record, `${recent.key} 근무시간 적용`);
 });
 
 els.salaryCalendarBtn.addEventListener("click", () => {
@@ -1944,6 +2060,7 @@ function closeSettingsPanel(fromHistory = false) {
 }
 
 els.openSettings.addEventListener("click", openSettingsPanel);
+els.navSettings.addEventListener("click", openSettingsPanel);
 els.closeSettings.addEventListener("click", () => closeSettingsPanel());
 els.menuScrim.addEventListener("click", () => closeSettingsPanel());
 
@@ -1957,6 +2074,14 @@ els.salaryQueryBtn.addEventListener("click", () => {
   els.queryMonth.value = viewMonth;
   renderSalaryQuery(false);
   els.salaryDialog.showModal();
+  els.salaryQueryBtn.classList.add("active");
+  els.salaryCalendarBtn.classList.remove("active");
+  els.journalCalendarBtn.classList.remove("active");
+});
+els.salaryDialog.addEventListener("close", () => {
+  els.salaryQueryBtn.classList.remove("active");
+  els.salaryCalendarBtn.classList.toggle("active", appMode === "salary");
+  els.journalCalendarBtn.classList.toggle("active", appMode === "journal");
 });
 
 els.queryOne.addEventListener("click", () => renderSalaryQuery(false));
@@ -2104,7 +2229,9 @@ window.addEventListener("focus", refreshCurrentDate);
 
 if ("serviceWorker" in navigator) {
   let refreshedByNewWorker = false;
+  let hadWorker = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadWorker) { hadWorker = true; return; }
     if (refreshedByNewWorker) return;
     refreshedByNewWorker = true;
     if (!document.querySelector("dialog[open]") && !els.settingsPanel.classList.contains("open")) location.reload();
